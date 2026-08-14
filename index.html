@@ -288,6 +288,24 @@
     saveChangeOrders(list);
   }
 
+  // ---- 追加見積書（既存の見積書と同じデータ構造。parentQuoteId/approvalStatusで区別する） ----
+  function unbilledApprovedAdditionalQuotes(projectId) {
+    return loadList(KEYS.quotes).filter(function (q) {
+      return q.projectId === projectId && q.parentQuoteId && q.approvalStatus === "approved" && !q.billed;
+    });
+  }
+  function markAdditionalQuotesBilled(ids, invoiceId) {
+    var list = loadList(KEYS.quotes);
+    list.forEach(function (q) { if (ids.indexOf(q.id) !== -1) { q.billed = true; q.invoiceId = invoiceId; } });
+    saveList(KEYS.quotes, list);
+  }
+  function setQuoteApprovalStatus(quoteId, status) {
+    var list = loadList(KEYS.quotes);
+    var q = list.find(function (x) { return x.id === quoteId; });
+    if (q) { q.approvalStatus = status; saveList(KEYS.quotes, list); }
+    return q;
+  }
+
   // 案件未設定の書類に、後から案件を割り当てる（見積/請求/領収書/経費/メモで共通利用）
   function assignProjectToRecord(key, id, sel) {
     var list = loadList(key);
@@ -344,11 +362,19 @@
         record.paymentStatus = "未入金";
         record.paidDate = null;
         record.changeOrderIds = f.selectedChangeOrderIds || [];
+        record.additionalQuoteIds = f.selectedAdditionalQuoteIds || [];
+      }
+      if (f.kind === "quote" && f.parentQuoteId) {
+        record.parentQuoteId = f.parentQuoteId;
+        record.approvalStatus = f.approvalStatus || "pending";
+        record.billed = false;
+        record.invoiceId = null;
       }
     }
     list.push(record);
     saveList(key, list);
     if (f.kind === "invoice" && record.changeOrderIds && record.changeOrderIds.length) markChangeOrdersBilled(record.changeOrderIds, id);
+    if (f.kind === "invoice" && record.additionalQuoteIds && record.additionalQuoteIds.length) markAdditionalQuotesBilled(record.additionalQuoteIds, id);
     return record;
   }
 
@@ -441,9 +467,7 @@
       .sort(function (a, b) { return (a.startTime || "").localeCompare(b.startTime || ""); });
   }
   function getTomorrowSchedules() { return getSchedulesByDate(addDays(todayStr(), 1)); }
-  function getSchedulesByProject(projectId) { return loadScheduleEvents().filter(function (s) { return s.projectId === projectId; }); }
   function getQuotesByProject(projectId) { return loadList(KEYS.quotes).filter(function (d) { return d.projectId === projectId; }); }
-  function getChangeOrdersByProject(projectId) { return loadChangeOrders().filter(function (c) { return c.projectId === projectId; }); }
   function getInvoicesByProject(projectId) { return loadList(KEYS.invoices).filter(function (d) { return d.projectId === projectId; }); }
   function getPaymentReceiptsByProject(projectId) { return loadList(KEYS.paymentReceipts).filter(function (d) { return d.projectId === projectId; }); }
   function getExpensesByProject(projectId) { return loadList(KEYS.receipts).filter(function (d) { return d.projectId === projectId; }); }
@@ -474,12 +498,6 @@
       .reduce(function (sum, p) { return sum + (Number(p.amount) || 0); }, 0);
   }
   // 本文中に登録済みの案件名・顧客名が含まれていないか検索する（あいまい一致の代わりに実データと突き合わせる）
-  function matchKnownProjects(text) {
-    return getProjects().filter(function (p) { return p.name && text.indexOf(p.name) !== -1; });
-  }
-  function matchKnownCustomers(text) {
-    return getCustomers().filter(function (c) { return c.name && text.indexOf(c.name) !== -1; });
-  }
   // 「顧客・案件」として正式登録されていない案件名も、メモ・見積・請求の自由テキストから拾う
   function findFreeTextProjectMatches(text) {
     var names = {};
@@ -567,12 +585,15 @@
     }
     var customer = extractCustomerName(question);
     if (customer) {
+      // 顧客が1案件だけならその案件として扱う。複数ある場合はここでは決めず、
+      // customerId側（interpretQuestionのcustomer_projects分岐）に処理させる。
       var customerProjects = getProjects().filter(function (p) { return p.customerId === customer.id; });
       if (customerProjects.length === 1) return { id: customerProjects[0].id, name: customerProjects[0].name };
-      if (customerProjects.length > 1) return { customerId: customer.id, name: customer.name };
+      if (customerProjects.length > 1) return null;
     }
+    // 「顧客・案件」に正式登録されていなくても、メモ・見積・請求の自由テキストから拾う
     var freeMatch = findFreeTextProjectMatches(question);
-    if (freeMatch.length > 0) return { name: freeMatch[0] };
+    if (freeMatch.length > 0) return { name: freeMatch[0], freeText: true };
     return null;
   }
 
@@ -642,13 +663,36 @@
     var customerInfo = extractCustomerName(question);
     var categories = inferCategories(question);
     var filters = inferFilters(question);
-    
+
+    var hasResolvedProject = !!(projectInfo && projectInfo.id);
+    var hasFreeTextProject = !!(projectInfo && !projectInfo.id && projectInfo.name);
+    var customerProjectCount = customerInfo ? getProjects().filter(function (p) { return p.customerId === customerInfo.id; }).length : 0;
+    var hasAmbiguousCustomer = !hasResolvedProject && !hasFreeTextProject && customerInfo && customerProjectCount > 1;
+
+    // 案件・顧客を特定できなかった質問は、案件横断の集計・一覧クエリとして扱う
+    var queryMode = "project";
+    if (hasAmbiguousCustomer) {
+      queryMode = "customer_projects";
+    } else if (!hasResolvedProject && !hasFreeTextProject) {
+      if (/未請求|請求.{0,4}(して.{0,2}ない|まだ)/.test(question)) {
+        queryMode = "unbilled_list";
+      } else if (/未入金|入金.{0,4}(され.{0,2}ない|して.{0,2}ない|まだ)/.test(question)) {
+        queryMode = "unpaid_list";
+      } else if (/(今月|先月)/.test(question) && /(請求|入金)/.test(question)) {
+        queryMode = "monthly_totals";
+      } else if (dateRange.from) {
+        queryMode = "schedule";
+      }
+    }
+
     return {
       intentType: "search",
+      queryMode: queryMode,
       searchIntents: [
         {
-          projectId: projectInfo ? projectInfo.id : null,
+          projectId: hasResolvedProject ? projectInfo.id : null,
           projectName: projectInfo ? projectInfo.name : null,
+          projectFreeText: hasFreeTextProject,
           customerId: customerInfo ? customerInfo.id : null,
           customerName: customerInfo ? customerInfo.name : null,
           dateRange: dateRange,
@@ -663,32 +707,14 @@
   // ---- Layer 2: データ横断検索層 ----
   function crossSearchData(searchIntent) {
     var targetProjects = [];
-    
+
     if (searchIntent.projectId) {
-      targetProjects.push(getProjects().find(function (p) { return p.id === searchIntent.projectId; }));
-    } else if (searchIntent.projectName) {
-      targetProjects = getProjects().filter(function (p) { return p.name === searchIntent.projectName; });
-      if (targetProjects.length === 0) {
-        // フリーテキスト検索に該当するプロジェクト
-        var captures = loadList(KEYS.captures);
-        var quotes = loadList(KEYS.quotes);
-        var invoices = loadList(KEYS.invoices);
-        var names = new Set();
-        captures.concat(quotes).concat(invoices).forEach(function (doc) {
-          if (doc.projectNameFree && doc.projectNameFree.indexOf(searchIntent.projectName) !== -1) {
-            names.add(doc.projectNameFree);
-          }
-        });
-        names.forEach(function (name) {
-          targetProjects.push({ name: name, id: "free_" + name });
-        });
-      }
+      var singleProject = getProjects().find(function (p) { return p.id === searchIntent.projectId; });
+      if (singleProject) targetProjects.push(singleProject);
     } else if (searchIntent.customerId) {
       targetProjects = getProjects().filter(function (p) { return p.customerId === searchIntent.customerId; });
-    } else if (searchIntent.dateRange.from) {
-      targetProjects = getProjects();
     }
-    
+
     // 各カテゴリでデータを検索
     var result = {
       projects: targetProjects.filter(Boolean),
@@ -738,16 +764,22 @@
     var quotes = allData.categories.quotes || [];
     var invoices = allData.categories.invoices || [];
     var changeOrders = allData.categories.changeOrders || [];
-    var payments = allData.categories.payments || [];
     var receipts = allData.categories.receipts || [];
     var photos = allData.categories.photos || [];
     var scheduleEvents = allData.categories.scheduleEvents || [];
-    
+    // 入金（payments）はinvoiceIdでのみ紐付き、projectIdを持たないため案件横断検索の
+    // 対象にできない。案件の請求書ごとに正しく集計する（既存のgetInvoicePaymentInfoを再利用）。
+    var payments = [];
+    invoices.forEach(function (inv) { payments = payments.concat(paymentsForInvoice(inv.id)); });
+
     // 金銭情報を計算
     var quoteAmount = quotes.reduce(function (sum, q) { return sum + calcTotals(q.items).total; }, 0);
     var invoiceAmount = invoices.reduce(function (sum, inv) { return sum + calcTotals(inv.items).total; }, 0);
     var changeOrderAmount = changeOrders.reduce(function (sum, c) { return sum + (c.amount || 0); }, 0);
-    var paidAmount = payments.reduce(function (sum, p) { return sum + (p.amount || 0); }, 0);
+    var paidAmount = invoices.reduce(function (sum, inv) {
+      var total = calcTotals(inv.items).total;
+      return sum + getInvoicePaymentInfo(inv.id, total).paidAmount;
+    }, 0);
     var expenseAmount = receipts.reduce(function (sum, r) { return sum + (r.amount || 0); }, 0);
     
     var financials = {
@@ -814,14 +846,31 @@
       }
 
       if (fin.expenseAmount > 0) {
-        text += "・経費：" + yen(fin.expenseAmount);
+        text += "・経費：" + yen(fin.expenseAmount) + "\n";
+      }
+
+      var nextSched = snap.scheduleEvents.filter(function (s) { return s.date >= todayStr(); })
+        .sort(function (a, b) { return (a.date + (a.startTime || "")).localeCompare(b.date + (b.startTime || "")); })[0];
+      if (nextSched) {
+        text += "・次の予定：" + nextSched.date + (nextSched.startTime ? " " + nextSched.startTime : "") + " " + esc(nextSched.title) + "\n";
       }
 
       if (snap.photos.length > 0) {
-        text += "\n・写真：" + snap.photos.length + " 枚";
+        text += "・写真：" + snap.photos.length + " 枚";
       }
 
-      return { text: text, data: snap, links: [] };
+      return { text: text.replace(/\n+$/, ""), data: snap, links: [] };
+    }
+
+    // 「いくら入金済み？」「未入金は？」→ 入金にしぼった回答
+    if (/入金/.test(originalQuestion)) {
+      if (fin.invoiceAmount === 0) {
+        return { text: snap.selection.projectName + "はまだ請求書が登録されていません。" };
+      }
+      return {
+        text: "入金済み：" + yen(fin.paidAmount) + "\n未入金：" + yen(fin.unpaidAmount),
+        data: fin
+      };
     }
 
     if (/いくら|金額|合計/.test(originalQuestion)) {
@@ -837,7 +886,7 @@
       }
       return { text: text2, data: fin, links: [] };
     }
-    
+
     // 「写真ある？」→ 写真の有無
     if (/写真/.test(originalQuestion)) {
       if (snap.photos.length === 0) {
@@ -845,99 +894,145 @@
       }
       return { text: "写真が" + snap.photos.length + "枚登録されています。", data: { count: snap.photos.length } };
     }
-    
+
     // 「追加工事ある？」→ 追加工事の有無
     if (/追加工事|変更/.test(originalQuestion)) {
       if (snap.documents.changeOrders.length === 0) {
         return { text: "追加工事の登録がありません。" };
       }
-      var coTotal = snap.documents.changeOrders.reduce(function (sum, c) { return sum + (c.amount || 0); }, 0);
-      return { text: "追加工事が" + snap.documents.changeOrders.length + "件、合計" + yen(coTotal) + "です。" };
+      var coLines = snap.documents.changeOrders.map(function (c) {
+        return (c.billed ? "[請求済み] " : "[未請求] ") + c.description + " " + yen(c.amount);
+      });
+      return { text: "追加工事が" + snap.documents.changeOrders.length + "件、合計" + yen(fin.changeOrderAmount) + "です。", lines: coLines };
     }
-    
+
+    // 「見積は？」→ 見積書の一覧（いくら、を伴わない聞き方）
+    if (/見積/.test(originalQuestion)) {
+      if (snap.documents.quotes.length === 0) {
+        return { text: "見積書の登録がありません。" };
+      }
+      var qLines = snap.documents.quotes.map(function (d) {
+        var badge = d.parentQuoteId ? (d.approvalStatus === "approved" ? "[追加見積・承認済み] " : "[追加見積・承認待ち] ") : "";
+        return badge + (d.docNumber || "") + "　" + (d.issueDate || "") + "　" + yen(calcTotals(d.items).total);
+      });
+      return { text: snap.selection.projectName + "の見積書が" + snap.documents.quotes.length + "件、合計" + yen(fin.quoteAmount) + "です。", lines: qLines };
+    }
+
+    // 「請求は？」→ 請求書の一覧（いくら、を伴わない聞き方）
+    if (/請求/.test(originalQuestion)) {
+      if (snap.documents.invoices.length === 0) {
+        return { text: "請求書の登録がありません。" };
+      }
+      var iLines = snap.documents.invoices.map(function (d) {
+        var total = calcTotals(d.items).total;
+        var info = getInvoicePaymentInfo(d.id, total);
+        return (d.docNumber || "") + "　" + yen(total) + "（" + info.status + "）";
+      });
+      return { text: snap.selection.projectName + "の請求書が" + snap.documents.invoices.length + "件、合計" + yen(fin.invoiceAmount) + "です。", lines: iLines };
+    }
+
     // デフォルト
     return { text: "情報を検索しましたが、質問に完全にお答えできませんでした。", data: snap };
   }
 
-  // ============================================================
-  // Chat Command Layer (旧)
-  // 自然文 → 構造化された intent {type, ...} への変換。
-  // 今はルールベース（キーワード・登録済みデータとの突き合わせ）だが、
-  // 将来AIを導入する場合はこの関数の代わりにAIが同じ形のintentを
-  // 生成し、そのままexecuteChatQueryへ渡せばよい。
-  // ============================================================
-  function interpretChatMessage(text) {
-    var t = (text || "").trim();
-    if (!t) return { type: "empty" };
-
-    // 「何がある/何かある/予定」のような明確な予定の聞き方だけを予定検索にする
-    // （「何を買った」等、日付＋別の話題の質問を誤って予定扱いしないため）
-    var scheduleAsk = /(何が?あ|何か ?あ|予定)/;
-    var dateMatch = t.match(/(\d{1,2})月(\d{1,2})日/);
-    if (/明日/.test(t) && scheduleAsk.test(t)) return { type: "schedule", date: addDays(todayStr(), 1), label: "明日" };
-    if (/今日/.test(t) && scheduleAsk.test(t)) return { type: "schedule", date: todayStr(), label: "今日" };
-    if (dateMatch && scheduleAsk.test(t)) return { type: "schedule", date: monthDayToIso(dateMatch[0]), label: dateMatch[0] };
-
-    // 買い出し・購入（「話す入力」の関連タスク欄から拾う）
-    if (/(買|購入)/.test(t) && /(何|なに|どこ)/.test(t)) {
-      return { type: "purchases", date: dateMatch ? monthDayToIso(dateMatch[0]) : null, label: dateMatch ? dateMatch[0] : "" };
-    }
-
-    if (/(請求.{0,3}(して.{0,2}ない|未|まだ))|未請求/.test(t)) return { type: "unbilled" };
-    if (/(入金.{0,3}(して.{0,2}ない|未))|未入金/.test(t)) return { type: "unpaid" };
-    if (/請求済/.test(t) || (/請求/.test(t) && /(した|してる|されてる|済み)/.test(t) && !/未/.test(t))) return { type: "billed" };
-    if (/入金済/.test(t) || (/入金/.test(t) && /(した|してる|されてる|済み)/.test(t) && !/未/.test(t))) return { type: "paid" };
-
-    if (/今月/.test(t) && /請求/.test(t)) return { type: "monthly_invoiced" };
-    if (/今月/.test(t) && /入金/.test(t)) return { type: "monthly_paid" };
-
-    var projMatch = matchKnownProjects(t);
-    if (/請求書/.test(t) && /(作|お願い|発行)/.test(t) && projMatch.length >= 1) {
-      return { type: "invoice_draft", candidates: projMatch };
-    }
-
-    var custMatch = matchKnownCustomers(t);
-    if (custMatch.length >= 1 && /(案件|現場)/.test(t)) return { type: "customer_projects", candidates: custMatch };
-
-    if (projMatch.length >= 1) return { type: "project_status", candidates: projMatch };
-    if (custMatch.length >= 1) return { type: "customer_projects", candidates: custMatch };
-
-    // 「顧客・案件」に正式登録されていなくても、メモ・見積・請求の自由テキストに
-    // 案件名らしき一致があれば、そこから分かる範囲で答える
-    var freeTextNames = findFreeTextProjectMatches(t);
-    if (freeTextNames.length >= 1) return { type: "project_status_loose", name: freeTextNames[0] };
-
-    return { type: "unknown", raw: t };
+  // ---- Layer 3-4 拡張: 案件を特定できない「一覧・集計」質問への回答 ----
+  // （未請求/未入金の案件一覧、今月の請求・入金合計、日付の予定など）
+  // Query層の既存関数（getUnbilledProjects等）をそのまま呼び出すだけで、
+  // 新しいデータ保持や重複ロジックは持たない。
+  function answerUnbilledProjectsList() {
+    var list = getUnbilledProjects();
+    if (list.length === 0) return { text: "未請求の案件はありません。" };
+    return { text: "未請求の案件が" + list.length + "件あります。", projectCards: list };
   }
 
-  function buildProjectStatus(projectId) {
-    var sel = projectSelectionInfo(projectId);
-    var quotes = getQuotesByProject(projectId);
-    var invoices = getInvoicesByProject(projectId);
-    var changeOrders = getChangeOrdersByProject(projectId);
-    var schedule = getSchedulesByProject(projectId).filter(function (s) { return s.date >= todayStr(); })
-      .sort(function (a, b) { return (a.date + (a.startTime || "")).localeCompare(b.date + (b.startTime || "")); });
-    var quoteTotal = quotes.reduce(function (sum, q) { return sum + calcTotals(q.items).total; }, 0);
-    var invoiceSummaries = invoices.map(function (inv) {
+  function answerUnpaidInvoicesList() {
+    var invoices = getUnpaidInvoices();
+    if (invoices.length === 0) return { text: "未入金の請求書はありません。" };
+    var remainTotal = invoices.reduce(function (sum, inv) {
       var total = calcTotals(inv.items).total;
-      var info = getInvoicePaymentInfo(inv.id, total);
-      return { docNumber: inv.docNumber, id: inv.id, total: total, status: info.status };
-    });
-    var totalPaid = invoices.reduce(function (sum, inv) {
-      var total = calcTotals(inv.items).total;
-      return sum + getInvoicePaymentInfo(inv.id, total).paidAmount;
+      return sum + getInvoicePaymentInfo(inv.id, total).remaining;
     }, 0);
+    var seen = {};
+    var projects = [];
+    invoices.forEach(function (inv) {
+      if (inv.projectId && !seen[inv.projectId]) {
+        seen[inv.projectId] = true;
+        var p = findProject(inv.projectId);
+        if (p) projects.push(p);
+      }
+    });
     return {
-      projectId: projectId,
-      title: [sel.customerName, sel.projectName].filter(Boolean).join(" ／ "),
-      nextSchedule: schedule[0] || null,
-      hasQuote: quotes.length > 0, quoteTotal: quoteTotal,
-      unbilledChangeOrders: changeOrders.filter(function (c) { return !c.billed; }),
-      hasInvoice: invoices.length > 0, invoiceSummaries: invoiceSummaries,
-      totalPaid: totalPaid
+      text: "未入金の案件が" + projects.length + "件、残り合計 " + yen(remainTotal) + " です。",
+      projectCards: projects.length ? projects : null,
+      invoiceCards: projects.length ? null : invoices
     };
   }
 
+  function answerMonthlyTotals(question, dateRange) {
+    var ym = (dateRange && dateRange.from) ? dateRange.from.slice(0, 7) : todayStr().slice(0, 7);
+    var label = /先月/.test(question) ? "先月" : "今月";
+    var wantInvoiced = /請求/.test(question);
+    var wantPaid = /入金/.test(question);
+    if (!wantInvoiced && !wantPaid) { wantInvoiced = true; wantPaid = true; }
+    var lines = [];
+    if (wantInvoiced) lines.push(label + "の請求額は合計 " + yen(getMonthlyInvoicedTotal(ym)) + " です。");
+    if (wantPaid) lines.push(label + "の入金額は合計 " + yen(getMonthlyPaidTotal(ym)) + " です。");
+    return { text: lines.join("\n") };
+  }
+
+  function scheduleDateLabel(question, dateRange) {
+    if (/今日|きょう/.test(question)) return "今日";
+    if (/明日|あした/.test(question)) return "明日";
+    if (/今週|こんしゅう/.test(question)) return "今週";
+    if (/先週|せんしゅう/.test(question)) return "先週";
+    if (/今月|こんげつ/.test(question)) return "今月";
+    if (/先月|せんげつ/.test(question)) return "先月";
+    return dateRange.from === dateRange.to ? dateRange.from : (dateRange.from + "〜" + dateRange.to);
+  }
+
+  function answerSchedule(question, dateRange) {
+    if (!dateRange || !dateRange.from) {
+      return { text: "日付を認識できませんでした。「今日」「明日」「8月13日」のように聞いてみてください。" };
+    }
+    var label = scheduleDateLabel(question, dateRange);
+    var events = loadScheduleEvents().filter(function (s) { return s.date >= dateRange.from && s.date <= dateRange.to; })
+      .sort(function (a, b) { return (a.date + (a.startTime || "")).localeCompare(b.date + (b.startTime || "")); });
+    var memoMatches = loadList(KEYS.captures).filter(function (c) {
+      var iso = resolveCaptureDateToIso(c);
+      return iso && iso >= dateRange.from && iso <= dateRange.to;
+    });
+    if (events.length === 0 && memoMatches.length === 0) {
+      return { text: label + "の予定は登録されていません。" };
+    }
+    var lines = events.map(function (s) {
+      var sel = projectSelectionInfo(s.projectId);
+      return (dateRange.from !== dateRange.to ? s.date + " " : "") + (s.startTime ? s.startTime + " " : "") + (sel && sel.projectName ? sel.projectName + "：" : "") + s.title;
+    });
+    memoMatches.forEach(function (c) {
+      var content = (c.confirmed && c.confirmed.content) || c.rawText || "";
+      lines.push("📝 " + content.slice(0, 40));
+    });
+    return { text: label + "の予定は" + (events.length + memoMatches.length) + "件です。", lines: lines };
+  }
+
+  function answerCustomerProjects(customerId, customerName) {
+    var projs = getProjects().filter(function (p) { return p.customerId === customerId; });
+    if (projs.length === 0) return { text: customerName + "の案件は見つかりませんでした。" };
+    return { text: customerName + "の案件が" + projs.length + "件あります。どちらですか？", projectCards: projs };
+  }
+
+  function answerFreeTextProject(name) {
+    var summary = buildFreeTextProjectSummary(name);
+    return {
+      text: "「" + name + "」はまだ「顧客・案件」に正式登録されていません。関連する記録から分かる範囲でお答えします。",
+      freeTextSummary: summary
+    };
+  }
+
+  // ============================================================
+  // 「請求書を作って」等、明示的な操作依頼に対する下書き生成
+  // （チャットのproject向け回答から、案件が1件特定できた場合にのみ呼ばれる）
+  // ============================================================
   function buildInvoiceDraftResponse(projectId) {
     var sel = projectSelectionInfo(projectId);
     var quotes = getQuotesByProject(projectId).sort(function (a, b) { return new Date(b.createdAt) - new Date(a.createdAt); });
@@ -957,93 +1052,6 @@
         changeOrderIds: unbilledCO.map(function (c) { return c.id; })
       }
     };
-  }
-
-  // ============================================================
-  // Query / Action ディスパッチ
-  // intent を受け取り、Query層の関数だけを呼んで応答を組み立てる。
-  // チャットUI（や将来のAI）はこの関数を経由するだけで、
-  // localStorageや個別のデータ配列には一切直接触れない。
-  // ============================================================
-  function executeChatQuery(intent) {
-    switch (intent.type) {
-      case "empty":
-        return { text: "何か聞いてください。例:「今日何ある？」「未請求ある？」「○○邸どうなってる？」" };
-      case "schedule": {
-        var events = getSchedulesByDate(intent.date);
-        var memoMatches = loadList(KEYS.captures).filter(function (c) { return resolveCaptureDateToIso(c) === intent.date; });
-        if (events.length === 0 && memoMatches.length === 0) return { text: intent.label + "の予定はありません。" };
-        var lines = events.map(function (s) {
-          var sel = projectSelectionInfo(s.projectId);
-          return (s.startTime ? s.startTime + " " : "") + (sel && sel.projectName ? sel.projectName + " " : "") + s.title;
-        });
-        var count = events.length + memoMatches.length;
-        return { text: intent.label + "の予定は" + count + "件です" + (memoMatches.length ? "（うちメモが" + memoMatches.length + "件）" : "") + "。", lines: lines, memoCards: memoMatches };
-      }
-      case "unbilled": {
-        var ub = getUnbilledProjects();
-        if (ub.length === 0) return { text: "未請求の案件はありません。" };
-        return { text: "未請求の案件が" + ub.length + "件あります。", projectCards: ub };
-      }
-      case "unpaid": {
-        var up = getUnpaidInvoices();
-        if (up.length === 0) return { text: "未入金の請求書はありません。" };
-        var remainTotal = up.reduce(function (sum, inv) {
-          var total = calcTotals(inv.items).total;
-          return sum + getInvoicePaymentInfo(inv.id, total).remaining;
-        }, 0);
-        return { text: "未入金が" + up.length + "件、残り合計 " + yen(remainTotal) + " です。", invoiceCards: up };
-      }
-      case "monthly_invoiced":
-        return { text: "今月の請求額は合計 " + yen(getMonthlyInvoicedTotal(todayStr().slice(0, 7))) + " です。" };
-      case "monthly_paid":
-        return { text: "今月の入金額は合計 " + yen(getMonthlyPaidTotal(todayStr().slice(0, 7))) + " です。" };
-      case "billed": {
-        var billedList = loadList(KEYS.invoices);
-        if (billedList.length === 0) return { text: "請求書はまだ1件も作成されていません。" };
-        return { text: "請求済みの請求書が" + billedList.length + "件あります。", invoiceCards: billedList };
-      }
-      case "paid": {
-        var paidList = loadList(KEYS.invoices).filter(function (inv) {
-          var total = calcTotals(inv.items).total;
-          return getInvoicePaymentInfo(inv.id, total).paidAmount > 0;
-        });
-        if (paidList.length === 0) return { text: "入金の記録がある請求書はまだありません。" };
-        return { text: "入金のある請求書が" + paidList.length + "件あります。", invoiceCards: paidList };
-      }
-      case "purchases": {
-        var purchaseCaptures = loadList(KEYS.captures).filter(function (c) {
-          if (!(c.confirmed && c.confirmed.tasks)) return false;
-          if (intent.date) return resolveCaptureDateToIso(c) === intent.date;
-          return true;
-        });
-        if (purchaseCaptures.length === 0) return { text: (intent.label ? intent.label + "の" : "") + "買い出し・購入に関するメモは見つかりませんでした。" };
-        return { text: (intent.label ? intent.label + "の" : "") + "買い出し関連のメモが" + purchaseCaptures.length + "件あります。", memoCards: purchaseCaptures };
-      }
-      case "project_status": {
-        if (intent.candidates.length === 0) return { text: "該当する案件が見つかりませんでした。" };
-        if (intent.candidates.length > 1) return { text: "案件が複数見つかりました。どちらですか？", projectCards: intent.candidates };
-        return { text: "", projectStatus: buildProjectStatus(intent.candidates[0].id) };
-      }
-      case "project_status_loose": {
-        var summary = buildFreeTextProjectSummary(intent.name);
-        return { text: "「" + intent.name + "」はまだ「顧客・案件」に正式登録されていません。関連する記録から分かる範囲でお答えします。", freeTextSummary: summary };
-      }
-      case "customer_projects": {
-        if (intent.candidates.length === 0) return { text: "該当する顧客が見つかりませんでした。" };
-        var customer = intent.candidates[0];
-        var projs = getProjects().filter(function (p) { return p.customerId === customer.id; });
-        if (projs.length === 0) return { text: customer.name + "の案件は見つかりませんでした。" };
-        return { text: customer.name + "の案件が" + projs.length + "件あります。", projectCards: projs };
-      }
-      case "invoice_draft": {
-        if (intent.candidates.length === 0) return { text: "該当する案件が見つかりませんでした。" };
-        if (intent.candidates.length > 1) return { text: "案件が複数見つかりました。どちらですか？", projectCards: intent.candidates };
-        return buildInvoiceDraftResponse(intent.candidates[0].id);
-      }
-      default:
-        return { text: "すみません、まだその質問にはうまく答えられません。「今日の予定」「未請求」「未入金」「○○邸どうなってる？」「田中さんの案件」のように聞いてみてください。" };
-    }
   }
 
   function loadCompany() {
@@ -1086,6 +1094,32 @@
       remarks: DEFAULT_REMARKS[kind],
       paymentTerms: kind === "quote" ? DEFAULT_PAYMENT_TERMS : ""
     };
+  }
+
+  // 追加見積書の番号は「元の見積番号-A1」のように連番にする
+  function nextAdditionalQuoteNumber(parentQuoteId) {
+    var quotes = loadList(KEYS.quotes);
+    var parent = quotes.find(function (q) { return q.id === parentQuoteId; });
+    var baseNumber = (parent && parent.docNumber) || nextDocNumber("quote");
+    var siblingCount = quotes.filter(function (q) { return q.parentQuoteId === parentQuoteId; }).length;
+    return baseNumber + "-A" + (siblingCount + 1);
+  }
+  // 追加見積書は既存の見積書フォームをそのまま流用し、元見積の宛先・現場情報を引き継ぐ
+  function defaultAdditionalQuoteForm(parentQuoteId) {
+    var base = defaultDocForm("quote");
+    var parent = loadList(KEYS.quotes).find(function (q) { return q.id === parentQuoteId; });
+    base.docNumber = nextAdditionalQuoteNumber(parentQuoteId);
+    base.parentQuoteId = parentQuoteId;
+    base.approvalStatus = "pending";
+    if (parent) {
+      base.projectId = parent.projectId;
+      base.customerName = parent.customerName;
+      base.project = parent.project;
+      base.workLocation = parent.workLocation;
+      base.periodStart = parent.periodStart;
+      base.periodEnd = parent.periodEnd;
+    }
+    return base;
   }
   function nl2br(s) {
     return (s == null ? "" : String(s)).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>");
@@ -1584,9 +1618,11 @@
     } else {
       body = list.map(function (d) {
         var total = d.kind === "receipt" ? Number(d.amountReceived) || 0 : calcTotals(d.items).total;
+        var kindLabel = (d.kind === "quote" && d.parentQuoteId) ? "追加見積書" : DOC_KIND_LABEL[d.kind];
+        var approvalBadge = (d.kind === "quote" && d.parentQuoteId) ? (d.approvalStatus === "approved" ? "・承認済み" : "・承認待ち") : "";
         return (
           '<div class="card" data-doc="' + d.id + '">' +
-          '  <div class="top-line"><span class="status-pill">' + DOC_KIND_LABEL[d.kind] + ' ' + (d.docNumber || "") + '</span><span>' + (d.issueDate || "") + '</span></div>' +
+          '  <div class="top-line"><span class="status-pill">' + kindLabel + approvalBadge + ' ' + (d.docNumber || "") + '</span><span>' + (d.issueDate || "") + '</span></div>' +
           '  <div class="customer-project">' + [d.customerName, d.project].filter(Boolean).join(" ／ ") + '</div>' +
           '  <div class="content-preview">' + (d.kind === "receipt" ? "領収額" : "合計") + ' ' + yen(total) + '</div>' +
           '</div>'
@@ -1667,9 +1703,10 @@
     if (state.docForm.kind === "receipt") return renderReceiptForm();
     var f = state.docForm;
     var isInvoice = f.kind === "invoice";
+    var isAdditionalQuote = !isInvoice && !!f.parentQuoteId;
     var t = calcTotals(f.items);
     return (
-      '<header><button class="back" data-go="docList">← 戻る</button><h1>' + (isInvoice ? "請求書を作成" : "見積書を作成") + '</h1></header>' +
+      '<header><button class="back" data-go="docList">← 戻る</button><h1>' + (isInvoice ? "請求書を作成" : (isAdditionalQuote ? "追加見積書を作成" : "見積書を作成")) + '</h1></header>' +
       '<button class="secondary-btn" id="pickProjectBtn" style="margin-top:0">🔗 ' + (f.projectId ? [f.customerName, f.project].filter(Boolean).join(" ／ ") : "案件を選ぶ（任意）") + '</button>' +
       '<label>顧客名</label><input type="text" id="f_customerName" value="' + esc(f.customerName) + '" placeholder="例: ○○ ○○">' +
       '<label>件名</label><input type="text" id="f_project" value="' + esc(f.project) + '" placeholder="例: ○○邸 リフォーム工事一式">' +
@@ -1689,7 +1726,7 @@
       '</div>' +
       (isInvoice ? "" : '<label>お支払条件（任意）</label><textarea id="f_paymentTerms">' + (f.paymentTerms || "") + '</textarea>') +
       '<label>備考（任意）</label><textarea id="f_remarks">' + (f.remarks || "") + '</textarea>' +
-      '<button class="primary-btn" id="saveDocBtn">' + (isInvoice ? "請求書を保存" : "見積書を保存") + '</button>' +
+      '<button class="primary-btn" id="saveDocBtn">' + (isInvoice ? "請求書を保存" : (isAdditionalQuote ? "追加見積書を保存" : "見積書を保存")) + '</button>' +
       '<div class="mic-hint">いただいた見積書・請求書フォーマットに合わせています。保存後の「印刷/PDF保存」でこのフォーマット通りに出力できます。「Excelダウンロード」は数値のみで、色などの装飾は無料ライブラリの制約により反映されません。</div>'
     );
   }
@@ -1735,7 +1772,9 @@
     if (!found) return '<header><button class="back" data-go="docList">← 戻る</button></header><p>見つかりません。</p>';
     if (found.kind === "receipt") return renderReceiptDetail2(found.doc);
     var d = found.doc, kind = found.kind, isInvoice = kind === "invoice";
-    var label = isInvoice ? "請求書" : "見積書";
+    var isAdditionalQuote = kind === "quote" && !!d.parentQuoteId;
+    var parentQuote = isAdditionalQuote ? loadList(KEYS.quotes).find(function (q) { return q.id === d.parentQuoteId; }) : null;
+    var label = isInvoice ? "請求書" : (isAdditionalQuote ? "追加見積書" : "見積書");
     var printTitle = isInvoice ? "請求書" : "御見積書";
     var company = loadCompany();
     var t = calcTotals(d.items);
@@ -1781,9 +1820,17 @@
       (!company.name ? '<div class="mic-hint">※自社情報が未設定です。ホーム画面の「⚙️ 自社情報を設定」から入力すると、この書類にも自動反映されます。</div>' : "") +
       (!d.projectId ? '<button class="secondary-btn" id="assignProjectBtn">🔗 案件に割り当てる</button>' : '<div class="mic-hint">紐付け中の案件: ' + esc((projectSelectionInfo(d.projectId) || {}).projectName || "(削除済み)") + '</div>') +
       (isInvoice ? renderInvoicePaymentSection(d.id, t.total) : "") +
+      (isAdditionalQuote ?
+        '<div class="card" style="cursor:default">' +
+        '<div class="top-line"><span class="status-pill" style="' + (d.approvalStatus === "approved" ? "background:var(--ok);color:#fff" : "") + '">' + (d.approvalStatus === "approved" ? "承認済み" : "承認待ち") + '</span><span>元見積: ' + esc(parentQuote ? (parentQuote.docNumber || "") : "(削除済み)") + '</span></div>' +
+        (d.approvalStatus === "approved"
+          ? '<button class="ghost-btn" id="unapproveQuoteBtn" data-quote-id="' + d.id + '" style="margin-top:0">承認待ちに戻す</button>'
+          : '<button class="secondary-btn" id="approveQuoteBtn" data-quote-id="' + d.id + '" style="margin-top:0">承認済みにする</button>') +
+        '</div>'
+        : "") +
       '<button class="primary-btn" id="printBtn">🖨️ 印刷 / PDF保存</button>' +
       '<button class="secondary-btn" id="exportXlsxBtn">📊 Excelでダウンロード</button>' +
-      (kind === "quote" ? '<button class="secondary-btn" data-make-invoice="' + d.id + '">この内容で請求書を作成</button>' : "") +
+      (kind === "quote" && !isAdditionalQuote ? '<button class="secondary-btn" data-make-invoice="' + d.id + '">この内容で請求書を作成</button>' : "") +
       (kind === "invoice" ? '<button class="secondary-btn" data-make-receipt="' + d.id + '">この内容で領収書を発行</button>' : "") +
       '<button class="delete-link" data-delete-doc="' + d.id + '">この' + label + 'を削除する</button>' +
       '</div>'
@@ -1906,6 +1953,8 @@
     var customer = project.customerId ? findCustomer(project.customerId) : null;
 
     var quotes = loadList(KEYS.quotes).filter(function (d) { return d.projectId === projectId; });
+    var mainQuotes = quotes.filter(function (d) { return !d.parentQuoteId; });
+    var additionalQuotes = quotes.filter(function (d) { return d.parentQuoteId; });
     var invoices = loadList(KEYS.invoices).filter(function (d) { return d.projectId === projectId; });
     var receipts2 = loadList(KEYS.paymentReceipts).filter(function (d) { return d.projectId === projectId; });
     var expenses = loadList(KEYS.receipts).filter(function (d) { return d.projectId === projectId; });
@@ -1932,6 +1981,12 @@
         '<div class="customer-project">' + c.description + '</div><div class="content-preview">' + yen(c.amount) + '</div></div>';
     }).join("");
 
+    var aqHtml = additionalQuotes.map(function (q) {
+      var total = calcTotals(q.items).total;
+      var approved = q.approvalStatus === "approved";
+      return '<div class="card" data-doc="' + q.id + '"><div class="top-line"><span class="status-pill" style="' + (approved ? "background:var(--ok);color:#fff" : "") + '">' + (approved ? "承認済み" : "承認待ち") + '</span><span>' + (q.docNumber || "") + '</span></div><div class="content-preview">' + yen(total) + '</div></div>';
+    }).join("");
+
     return (
       '<header><button class="back" data-go="projectList">← 戻る</button><h1>案件詳細</h1></header>' +
       '<div class="card" style="cursor:default">' +
@@ -1946,7 +2001,9 @@
       '<button class="secondary-btn" id="quickQuoteBtn" style="margin-top:0">＋見積書</button>' +
       '<button class="secondary-btn" id="quickInvoiceBtn" style="margin-top:0">＋請求書</button>' +
       '</div>' +
-      section("見積書", quotes.map(function (d) { return docLine(d, "quote"); }).join(""), "まだありません") +
+      section("見積書", mainQuotes.map(function (d) { return docLine(d, "quote"); }).join(""), "まだありません") +
+      section("追加見積書", aqHtml, "まだありません") +
+      '<button class="secondary-btn" id="addAdditionalQuoteBtn" style="margin-top:10px">＋追加見積書を作成</button>' +
       section("請求書", invoices.map(function (d) { return docLine(d, "invoice"); }).join(""), "まだありません") +
       section("領収書", receipts2.map(function (d) { return docLine(d, "receipt"); }).join(""), "まだありません") +
       section("経費・レシート", expenses.map(function (r) {
@@ -2048,23 +2105,6 @@
         '<div class="content-preview">' + (inv.docNumber || "") + '　残り ' + yen(info.remaining) + '</div></div>';
     }).join("");
   }
-  function renderChatStatusCard(st) {
-    var lines = [];
-    if (st.nextSchedule) lines.push('<div class="content-preview">📅 ' + st.nextSchedule.date + (st.nextSchedule.startTime ? " " + st.nextSchedule.startTime : "") + " " + esc(st.nextSchedule.title) + '</div>');
-    lines.push('<div class="content-preview">📄 見積: ' + (st.hasQuote ? yen(st.quoteTotal) : "未作成") + '</div>');
-    if (st.unbilledChangeOrders.length) {
-      lines.push('<div class="content-preview">➕ 追加工事(未請求): ' + st.unbilledChangeOrders.map(function (c) { return esc(c.description) + " " + yen(c.amount); }).join("、") + '</div>');
-    }
-    if (st.hasInvoice) {
-      st.invoiceSummaries.forEach(function (i) { lines.push('<div class="content-preview">🧾 請求 ' + (i.docNumber || "") + ": " + yen(i.total) + "（" + i.status + "）</div>"); });
-    } else {
-      lines.push('<div class="content-preview">🧾 請求: 未作成</div>');
-    }
-    lines.push('<div class="content-preview">💰 入金合計: ' + yen(st.totalPaid) + '</div>');
-    return '<div class="card" data-project="' + st.projectId + '" style="margin-top:8px">' +
-      '<div class="customer-project">🏠 ' + esc(st.title) + '</div>' + lines.join("") +
-      '<div style="color:var(--accent);font-size:12.5px;margin-top:6px;font-weight:700">この案件を開く →</div></div>';
-  }
   function renderChatInvoiceDraftCard(draft) {
     var rows = draft.items.map(function (it) {
       return '<div class="content-preview">' + esc(it.spec || it.category || "") + "　" + yen((Number(it.qty) || 0) * (Number(it.unitPrice) || 0)) + '</div>';
@@ -2139,7 +2179,6 @@
     if (d.projectCards) extra += renderChatProjectCards(d.projectCards);
     if (d.invoiceCards) extra += renderChatInvoiceCards(d.invoiceCards);
     if (d.memoCards && d.memoCards.length) extra += renderChatMemoCards(d.memoCards);
-    if (d.projectStatus) extra += renderChatStatusCard(d.projectStatus);
     if (d.freeTextSummary) extra += renderChatFreeTextSummary(d.freeTextSummary);
     if (d.invoiceDraft) extra += renderChatInvoiceDraftCard(d.invoiceDraft);
     return '<div class="chat-bubble-assistant"><div class="bubble">' + nl2br(m.text) + '</div>' + extra + '</div>';
@@ -2453,11 +2492,17 @@
       if (found) exportXlsx(found.doc, found.kind);
     });
     function startInvoiceWithChangeOrderCheck(base) {
-      var unbilled = base.projectId ? unbilledChangeOrders(base.projectId) : [];
-      if (unbilled.length === 0) { go("docForm", { docForm: base }); return; }
+      var unbilledCO = base.projectId ? unbilledChangeOrders(base.projectId) : [];
+      var unbilledAQ = base.projectId ? unbilledApprovedAdditionalQuotes(base.projectId) : [];
+      if (unbilledCO.length === 0 && unbilledAQ.length === 0) { go("docForm", { docForm: base }); return; }
+      var pending = unbilledCO.map(function (c) {
+        return { type: "changeOrder", id: c.id, description: c.description, amount: c.amount, checked: true };
+      }).concat(unbilledAQ.map(function (q) {
+        return { type: "additionalQuote", id: q.id, description: "追加見積 " + (q.docNumber || ""), amount: calcTotals(q.items).total, checked: true };
+      }));
       go("changeOrderReview", {
         pendingInvoiceBase: base,
-        pendingChangeOrders: unbilled.map(function (c) { return { id: c.id, description: c.description, amount: c.amount, checked: true }; })
+        pendingChangeOrders: pending
       });
     }
     var makeInvoiceBtn = document.querySelector("[data-make-invoice]");
@@ -2503,6 +2548,16 @@
       var amount = Number(document.getElementById("payAmount").value) || 0;
       if (amount <= 0) { alert("入金額を入力してください。"); return; }
       recordPayment(recordPaymentBtn.getAttribute("data-invoice-id"), amount, document.getElementById("payDate").value, "");
+      render();
+    });
+    var approveQuoteBtn = document.getElementById("approveQuoteBtn");
+    if (approveQuoteBtn) approveQuoteBtn.addEventListener("click", function () {
+      setQuoteApprovalStatus(approveQuoteBtn.getAttribute("data-quote-id"), "approved");
+      render();
+    });
+    var unapproveQuoteBtn = document.getElementById("unapproveQuoteBtn");
+    if (unapproveQuoteBtn) unapproveQuoteBtn.addEventListener("click", function () {
+      setQuoteApprovalStatus(unapproveQuoteBtn.getAttribute("data-quote-id"), "pending");
       render();
     });
     document.querySelectorAll("[data-delete-payment]").forEach(function (el) {
@@ -2614,6 +2669,13 @@
       createChangeOrder(state.projectId, desc, amount);
       render();
     });
+    var addAdditionalQuoteBtn = document.getElementById("addAdditionalQuoteBtn");
+    if (addAdditionalQuoteBtn) addAdditionalQuoteBtn.addEventListener("click", function () {
+      var mainQuotes = loadList(KEYS.quotes).filter(function (q) { return q.projectId === state.projectId && !q.parentQuoteId; })
+        .sort(function (a, b) { return new Date(b.createdAt) - new Date(a.createdAt); });
+      if (mainQuotes.length === 0) { alert("先にこの案件の見積書を作成してください。"); return; }
+      go("docForm", { docForm: defaultAdditionalQuoteForm(mainQuotes[0].id) });
+    });
 
     // 追加工事の請求組み込みチェックリスト
     document.querySelectorAll(".co-check").forEach(function (el) {
@@ -2626,10 +2688,20 @@
     if (coReviewNextBtn) coReviewNextBtn.addEventListener("click", function () {
       var base = state.pendingInvoiceBase;
       var selected = (state.pendingChangeOrders || []).filter(function (c) { return c.checked; });
+      var selectedCOIds = [];
+      var selectedAQIds = [];
       selected.forEach(function (c) {
-        base.items.push({ category: "追加工事", spec: c.description, qty: 1, unit: "式", unitPrice: c.amount });
+        if (c.type === "additionalQuote") {
+          selectedAQIds.push(c.id);
+          var aq = loadList(KEYS.quotes).find(function (x) { return x.id === c.id; });
+          if (aq) aq.items.forEach(function (it) { base.items.push(Object.assign({}, it)); });
+        } else {
+          selectedCOIds.push(c.id);
+          base.items.push({ category: "追加工事", spec: c.description, qty: 1, unit: "式", unitPrice: c.amount });
+        }
       });
-      base.selectedChangeOrderIds = selected.map(function (c) { return c.id; });
+      base.selectedChangeOrderIds = selectedCOIds;
+      base.selectedAdditionalQuoteIds = selectedAQIds;
       go("docForm", { docForm: base });
     });
     var coReviewCancelBtn = document.getElementById("coReviewCancelBtn");
@@ -2710,18 +2782,42 @@
 
       var parsedQuestion = interpretQuestion(text);
       var searchIntent = parsedQuestion.searchIntents[0];
-      var searchResults = crossSearchData(searchIntent);
-
       var response;
-      if (searchResults.projects.length === 1) {
-        var snapshot = buildProjectSnapshot(searchResults.projects[0].id, searchResults);
-        response = generateAnswer(text, snapshot);
-      } else if (searchResults.projects.length > 1) {
-        var firstProject = searchResults.projects[0];
-        var snapshot2 = buildProjectSnapshot(firstProject.id, searchResults);
-        response = generateAnswer(text, snapshot2);
-      } else {
-        response = buildGeneralFallbackResponse(text, searchResults);
+
+      // 案件・顧客を特定できない質問は、案件横断の一覧・集計クエリとして処理する
+      // （Query層の既存関数をそのまま呼ぶだけで、新しい検索ロジックは持たない）
+      switch (parsedQuestion.queryMode) {
+        case "unbilled_list":
+          response = answerUnbilledProjectsList();
+          break;
+        case "unpaid_list":
+          response = answerUnpaidInvoicesList();
+          break;
+        case "monthly_totals":
+          response = answerMonthlyTotals(text, searchIntent.dateRange);
+          break;
+        case "schedule":
+          response = answerSchedule(text, searchIntent.dateRange);
+          break;
+        case "customer_projects":
+          response = answerCustomerProjects(searchIntent.customerId, searchIntent.customerName);
+          break;
+        default:
+          if (searchIntent.projectId && /請求書/.test(text) && /(作|お願い|発行)/.test(text)) {
+            response = buildInvoiceDraftResponse(searchIntent.projectId);
+            break;
+          }
+          var searchResults = crossSearchData(searchIntent);
+          if (searchResults.projects.length >= 1) {
+            var snapshot = buildProjectSnapshot(searchResults.projects[0].id, searchResults);
+            response = generateAnswer(text, snapshot);
+            // 案件名をタップして案件詳細へ遷移できるよう、回答には必ず案件カードを添える
+            if (!response.projectCards && !response.invoiceDraft) response.projectCards = [snapshot.project];
+          } else if (searchIntent.projectFreeText) {
+            response = answerFreeTextProject(searchIntent.projectName);
+          } else {
+            response = buildGeneralFallbackResponse(text, searchResults);
+          }
       }
 
       lastInvoiceDraft = response.invoiceDraft || null;
