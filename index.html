@@ -1,0 +1,2780 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>音声業務管理アプリ（プロトタイプ）</title>
+<!-- Excelダウンロード機能でのみ使用する無料オープンソースライブラリ（SheetJS）。この読み込みのみ外部通信が発生する -->
+<script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<!-- レシートのOCR（文字読み取り）機能でのみ使用する無料オープンソースライブラリ（Tesseract.js）。初回読み取り時に言語データ(数MB)を追加で取得する -->
+<script defer src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<style>
+  :root {
+    --bg: #f5f4f1;
+    --surface: #ffffff;
+    --text: #262320;
+    --text-dim: #6b655d;
+    --accent: #b5651d;
+    --accent-dim: #e8ded2;
+    --border: #e2ddd4;
+    --danger: #b3372c;
+    --ok: #3f7d4f;
+    --radius: 14px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1a17;
+      --surface: #262320;
+      --text: #f0ece5;
+      --text-dim: #a89f92;
+      --accent: #e0965a;
+      --accent-dim: #3a2f24;
+      --border: #3a352e;
+      --danger: #e07a6c;
+      --ok: #7cc493;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Hiragino Sans", "Yu Gothic", sans-serif;
+    display: flex;
+    justify-content: center;
+  }
+  #app {
+    width: 100%;
+    max-width: 480px;
+    min-height: 100vh;
+    padding: 20px 18px 84px;
+  }
+  .bottom-nav {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 10;
+    display: flex; justify-content: center;
+    background: var(--surface); border-top: 1px solid var(--border);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .bottom-nav-item {
+    flex: 1; max-width: 120px; display: flex; flex-direction: column; align-items: center; gap: 2px;
+    background: none; border: none; font-size: 10.5px; color: var(--text-dim); padding: 8px 0 6px; cursor: pointer;
+  }
+  .bottom-nav-item span:first-child { font-size: 20px; line-height: 1; }
+  .bottom-nav-item.active { color: var(--accent); font-weight: 700; }
+  .chat-bubble-user { text-align: right; margin-bottom: 10px; }
+  .chat-bubble-user span {
+    display: inline-block; background: var(--accent); color: #fff; padding: 9px 14px;
+    border-radius: 14px 14px 2px 14px; max-width: 85%; font-size: 14px; text-align: left; white-space: pre-wrap;
+  }
+  .chat-bubble-assistant { margin-bottom: 14px; }
+  .chat-bubble-assistant .bubble {
+    display: inline-block; background: var(--surface); border: 1px solid var(--border); padding: 10px 14px;
+    border-radius: 14px 14px 14px 2px; max-width: 92%; font-size: 14px; white-space: pre-wrap;
+  }
+  header { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+  header .back { background: none; border: none; color: var(--accent); font-size: 17px; padding: 6px 4px; cursor: pointer; }
+  h1 { font-size: 19px; margin: 0; }
+  .subtitle { color: var(--text-dim); font-size: 13px; margin: -12px 0 20px; }
+  .home-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 22px; }
+  .big-btn {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 18px 16px; font-size: 16px; font-weight: 700; color: var(--text); cursor: pointer; text-align: left;
+  }
+  .big-btn .icon { font-size: 26px; }
+  .big-btn .desc { font-weight: 400; font-size: 12px; color: var(--text-dim); }
+  textarea, input[type=text], input[type=number], input[type=date], select {
+    width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px; font-size: 15px; color: var(--text); font-family: inherit;
+  }
+  textarea { min-height: 110px; resize: vertical; }
+  label { display: block; font-size: 12.5px; color: var(--text-dim); margin: 16px 0 6px; }
+  .primary-btn {
+    width: 100%; background: var(--accent); color: #fff; border: none; border-radius: 10px;
+    padding: 14px; font-size: 16px; font-weight: 700; margin-top: 22px; cursor: pointer;
+  }
+  .secondary-btn {
+    width: 100%; background: var(--accent-dim); color: var(--accent); border: none; border-radius: 10px;
+    padding: 13px; font-size: 15px; font-weight: 700; margin-top: 10px; cursor: pointer;
+  }
+  .ghost-btn {
+    width: 100%; background: none; border: 1px solid var(--border); color: var(--text-dim); border-radius: 10px;
+    padding: 12px; font-size: 14px; margin-top: 10px; cursor: pointer;
+  }
+  .mic-row { display: flex; gap: 8px; margin-top: 10px; }
+  .mic-btn {
+    flex: 0 0 auto; width: 52px; height: 52px; border-radius: 50%; border: 1px solid var(--border);
+    background: var(--surface); font-size: 22px; cursor: pointer;
+  }
+  .mic-btn.listening { background: var(--danger); border-color: var(--danger); color: #fff; }
+  .mic-hint { font-size: 11.5px; color: var(--text-dim); margin-top: 6px; line-height: 1.6; }
+  .field-row { margin-bottom: 2px; }
+  .badge { display: inline-block; font-size: 11px; background: var(--accent-dim); color: var(--accent); padding: 3px 9px; border-radius: 999px; margin-bottom: 14px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 12px; cursor: pointer; }
+  .card .top-line { display: flex; justify-content: space-between; font-size: 13px; color: var(--text-dim); margin-bottom: 6px; }
+  .card .customer-project { font-size: 15.5px; font-weight: 700; }
+  .card .content-preview { font-size: 13.5px; color: var(--text-dim); margin-top: 4px; white-space: pre-wrap; }
+  .card .thumb-row { display: flex; align-items: center; gap: 12px; }
+  .card img.thumb { width: 52px; height: 52px; object-fit: cover; border-radius: 8px; flex: 0 0 auto; }
+  .empty-state { text-align: center; color: var(--text-dim); font-size: 14px; margin-top: 60px; line-height: 1.8; }
+  .raw-ref { font-size: 12.5px; color: var(--text-dim); background: var(--accent-dim); border-radius: 10px; padding: 10px 12px; margin-top: 6px; white-space: pre-wrap; }
+  .delete-link { display: block; text-align: center; color: var(--danger); font-size: 13px; margin-top: 16px; background: none; border: none; cursor: pointer; }
+  .notice { font-size: 12px; color: var(--text-dim); line-height: 1.8; margin-top: 26px; border-top: 1px solid var(--border); padding-top: 14px; }
+  .add-fab { display: block; width: 100%; text-align: center; background: var(--surface); border: 1px dashed var(--border); color: var(--accent); border-radius: 10px; padding: 12px; font-size: 14px; font-weight: 700; margin-bottom: 16px; cursor: pointer; }
+  .photo-frame { width: 100%; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--border); margin-bottom: 4px; background: var(--surface); }
+  .photo-frame img { width: 100%; display: block; }
+  .status-pill { display: inline-block; font-size: 11px; padding: 3px 10px; border-radius: 999px; background: var(--accent-dim); color: var(--accent); font-weight: 700; }
+  .date-pair { display: flex; gap: 8px; }
+  .date-pair input { flex: 1; }
+  .item-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
+  .item-card input { margin-top: 0; }
+  .item-card .it-spec, .item-card .it-category-custom, .item-card select { margin-top: 6px; }
+  .item-card .row-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .item-card .row-head span { font-size: 11px; color: var(--text-dim); }
+  .item-card .rm { background: none; border: none; color: var(--danger); font-size: 16px; cursor: pointer; }
+  .item-card .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-top: 6px; }
+  .item-card input { padding: 9px 8px; font-size: 13.5px; }
+  .item-amount { text-align: right; font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+  .totals-box { margin-top: 14px; font-size: 14px; }
+  .totals-box .line { display: flex; justify-content: space-between; padding: 4px 0; color: var(--text-dim); }
+  .totals-box .line.total { color: var(--text); font-weight: 700; font-size: 17px; border-top: 1px solid var(--border); margin-top: 6px; padding-top: 10px; }
+
+  /* ---- 帳票プレビュー（実際の請求書フォーマットに合わせたレイアウト） ---- */
+  .doc-sheet { background: #fff; color: #1c1c1c; border: 1px solid #ccc; border-radius: 4px; padding: 18px 16px; font-size: 12px; }
+  .doc-sheet .doc-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px; }
+  .doc-sheet .doc-title { font-size: 22px; font-weight: 800; color: #2f5d50; letter-spacing: 3px; margin: 0; }
+  .doc-sheet .doc-meta { text-align: right; font-size: 11.5px; line-height: 1.7; }
+  .doc-sheet .doc-meta b { font-size: 13px; }
+  .doc-sheet .doc-parties { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; margin-bottom: 14px; border-bottom: 2px solid #2f5d50; padding-bottom: 10px; flex-wrap: wrap; }
+  .doc-sheet .customer-name { font-size: 16px; font-weight: 700; border-bottom: 1px solid #999; padding-bottom: 4px; margin-bottom: 4px; }
+  .doc-sheet .doc-company { text-align: right; font-size: 11px; line-height: 1.6; }
+  .doc-sheet .doc-company .company-name { font-size: 13px; font-weight: 700; margin-bottom: 2px; }
+  .doc-sheet .doc-info-amount { display: flex; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+  .doc-sheet table.doc-info { flex: 1; min-width: 170px; border-collapse: collapse; font-size: 11.5px; height: fit-content; }
+  .doc-sheet table.doc-info th { text-align: left; background: #eef1ef; padding: 6px 8px; width: 70px; font-weight: 600; border: 1px solid #ddd; }
+  .doc-sheet table.doc-info td { padding: 6px 8px; border: 1px solid #ddd; }
+  .doc-sheet .doc-amount-box { flex: 0 0 140px; background: #f2ead9; border: 2px solid #2f5d50; border-radius: 6px; text-align: center; padding: 10px 6px; display: flex; flex-direction: column; justify-content: center; }
+  .doc-sheet .amount-label { font-size: 10.5px; color: #555; margin-bottom: 4px; }
+  .doc-sheet .amount-value { font-size: 18px; font-weight: 800; color: #1c1c1c; }
+  table.doc-items2 { width: 100%; border-collapse: collapse; font-size: 11px; margin-bottom: 10px; }
+  table.doc-items2 th { background: #2f5d50; color: #fff; padding: 6px 4px; font-weight: 600; }
+  table.doc-items2 td { padding: 5px 4px; border-bottom: 1px solid #ddd; }
+  table.doc-items2 th:nth-child(3), table.doc-items2 td:nth-child(3),
+  table.doc-items2 th:nth-child(5), table.doc-items2 td:nth-child(5),
+  table.doc-items2 th:nth-child(6), table.doc-items2 td:nth-child(6) { text-align: right; }
+  table.doc-totals2 { margin-left: auto; width: 220px; border-collapse: collapse; margin-bottom: 14px; }
+  table.doc-totals2 td { padding: 5px 8px; font-size: 12px; }
+  table.doc-totals2 td:last-child { text-align: right; }
+  table.doc-totals2 tr.total td { font-weight: 800; font-size: 15px; background: #eef1ef; }
+  .doc-footer2 { display: flex; gap: 14px; font-size: 11px; flex-wrap: wrap; }
+  .doc-footer2 > div { flex: 1; min-width: 150px; line-height: 1.7; }
+  .footer-label2 { font-weight: 700; margin-bottom: 4px; border-bottom: 1px solid #999; padding-bottom: 2px; }
+
+  @media print {
+    .no-print { display: none !important; }
+    body, #app { max-width: none; padding: 0; margin: 0; background: #fff; color: #000; }
+    .doc-sheet { border: none; }
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  var KEYS = {
+    captures: "captures_v1", receipts: "receipts_v1", quotes: "quotes_v1", invoices: "invoices_v1",
+    paymentReceipts: "payment_receipts_v1", company: "company_profile_v1",
+    customers: "customers_v1", projects: "projects_v1", changeOrders: "change_orders_v1", itemPresets: "item_presets_v1",
+    payments: "payments_v1", photos: "photos_v1", scheduleEvents: "schedule_events_v1"
+  };
+
+  function loadList(key) {
+    try { return JSON.parse(localStorage.getItem(key)) || []; } catch (e) { return []; }
+  }
+  function saveList(key, list) {
+    try {
+      localStorage.setItem(key, JSON.stringify(list));
+      return true;
+    } catch (e) {
+      alert("保存に失敗しました。端末のストレージ容量が不足している可能性があります（写真付きのレシートが多いと発生しやすいです）。不要なレシートを削除してから、もう一度お試しください。");
+      return false;
+    }
+  }
+  function newId(prefix) { return prefix + "_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8); }
+  function todayStr() { return new Date().toISOString().slice(0, 10); }
+  function addDays(dateStr, n) { var d = dateStr ? new Date(dateStr) : new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); }
+  function yen(n) { return "¥" + (Math.round(n) || 0).toLocaleString("ja-JP"); }
+  function esc(v) { return (v == null ? "" : String(v)).replace(/"/g, "&quot;"); }
+
+  var DEFAULT_COMPANY = { name: "", zip: "", address: "", tel: "", fax: "", invoiceRegNo: "", bankName: "", bankBranch: "", accountType: "普通", accountNumber: "", accountHolder: "" };
+
+  // いただいた請求書サンプルの項目から作成した初期候補（⚙️自社情報の画面から追加・削除できる）
+  var DEFAULT_ITEM_PRESETS = [
+    { category: "仮設工事", spec: "養生・仮設足場一式", unit: "式" },
+    { category: "解体工事", spec: "既存内装・設備解体、廃材搬出", unit: "式" },
+    { category: "木工事", spec: "床下地・造作材工事", unit: "式" },
+    { category: "内装工事", spec: "クロス・フローリング張替", unit: "㎡" },
+    { category: "建具工事", spec: "室内建具・収納扉交換", unit: "箇所" },
+    { category: "電気設備工事", spec: "配線・照明器具・スイッチ交換", unit: "式" },
+    { category: "給排水衛生設備工事", spec: "キッチン・洗面・トイレ設備交換", unit: "式" },
+    { category: "産業廃棄物処分費", spec: "解体廃材処分", unit: "式" },
+    { category: "諸経費", spec: "現場管理費・運搬費", unit: "式" }
+  ];
+  function loadItemPresets() {
+    var raw = localStorage.getItem(KEYS.itemPresets);
+    if (raw === null) {
+      var seeded = DEFAULT_ITEM_PRESETS.map(function (p) { return Object.assign({ id: newId("ip") }, p); });
+      saveList(KEYS.itemPresets, seeded);
+      return seeded;
+    }
+    try { return JSON.parse(raw) || []; } catch (e) { return []; }
+  }
+  function saveItemPresets(list) { return saveList(KEYS.itemPresets, list); }
+  function matchPreset(categoryName) {
+    return loadItemPresets().filter(function (p) { return p.category === categoryName; })[0];
+  }
+
+  // ---- 顧客・案件 ----
+  function loadCustomers() { return loadList(KEYS.customers); }
+  function saveCustomers(list) { return saveList(KEYS.customers, list); }
+  function loadProjects() { return loadList(KEYS.projects); }
+  function saveProjects(list) { return saveList(KEYS.projects, list); }
+  function findCustomer(id) { return loadCustomers().find(function (c) { return c.id === id; }); }
+  function findProject(id) { return loadProjects().find(function (p) { return p.id === id; }); }
+  var PROJECT_STAGES = ["見積前", "見積中", "受注", "工事中", "完了"];
+
+  // 顧客名の完全一致があれば再利用し、なければ新規作成した上で、案件を新規作成する
+  function createOrReuseCustomerAndProject(input) {
+    var customers = loadCustomers();
+    var name = (input.customerName || "").trim();
+    var customer = customers.find(function (c) { return c.name === name; });
+    if (!customer && name) {
+      customer = { id: newId("cust"), name: name, address: input.customerAddress || "", tel: input.customerTel || "", contactPerson: "", createdAt: new Date().toISOString() };
+      customers.push(customer);
+      saveCustomers(customers);
+    }
+    var projects = loadProjects();
+    var project = {
+      id: newId("proj"), customerId: customer ? customer.id : null, name: (input.projectName || "").trim(),
+      workLocation: input.workLocation || "", periodStart: input.periodStart || "", periodEnd: input.periodEnd || "",
+      stage: "見積前", createdAt: new Date().toISOString()
+    };
+    projects.push(project);
+    saveProjects(projects);
+    return project;
+  }
+  function projectSelectionInfo(projectId) {
+    var project = findProject(projectId);
+    if (!project) return null;
+    var customer = project.customerId ? findCustomer(project.customerId) : null;
+    return {
+      projectId: project.id, customerName: customer ? customer.name : "", projectName: project.name,
+      workLocation: project.workLocation, periodStart: project.periodStart, periodEnd: project.periodEnd
+    };
+  }
+
+  // ---- 追加工事 ----
+  function loadChangeOrders() { return loadList(KEYS.changeOrders); }
+  function saveChangeOrders(list) { return saveList(KEYS.changeOrders, list); }
+  function unbilledChangeOrders(projectId) {
+    return loadChangeOrders().filter(function (c) { return c.projectId === projectId && !c.billed; });
+  }
+  function markChangeOrdersBilled(ids, invoiceId) {
+    var list = loadChangeOrders();
+    list.forEach(function (c) { if (ids.indexOf(c.id) !== -1) { c.billed = true; c.invoiceId = invoiceId; } });
+    saveChangeOrders(list);
+  }
+
+  // 案件未設定の書類に、後から案件を割り当てる（見積/請求/領収書/経費/メモで共通利用）
+  function assignProjectToRecord(key, id, sel) {
+    var list = loadList(key);
+    var rec = list.find(function (x) { return x.id === id; });
+    if (!rec) return;
+    rec.projectId = sel.projectId;
+    saveList(key, list);
+  }
+
+  // ============================================================
+  // 業務ロジック層
+  // 画面（イベントハンドラ）からも、将来のAI（構造化コマンド）からも
+  // 同じ関数を呼び出せるようにする。ここから下の関数はDOMに一切触れない。
+  // 例）将来: {type:"create_change_order", projectId, description, amount}
+  //     → createChangeOrder(projectId, description, amount) をそのまま呼ぶだけでよい
+  // ============================================================
+
+  function updateProjectStage(projectId, stage) {
+    var projects = loadProjects();
+    var p = projects.find(function (x) { return x.id === projectId; });
+    if (p) { p.stage = stage; saveProjects(projects); }
+    return p;
+  }
+
+  function createChangeOrder(projectId, description, amount) {
+    var list = loadChangeOrders();
+    var rec = { id: newId("co"), projectId: projectId, description: description, amount: Number(amount) || 0, billed: false, invoiceId: null, createdAt: new Date().toISOString() };
+    list.push(rec);
+    saveChangeOrders(list);
+    return rec;
+  }
+
+  function createDocumentRecord(f) {
+    var key = KEYS[DOC_KEY_BY_KIND[f.kind]];
+    var list = loadList(key);
+    var id = newId(f.kind);
+    var record;
+    if (f.kind === "receipt") {
+      record = {
+        id: id, kind: "receipt", docNumber: f.docNumber, issueDate: f.issueDate,
+        customerName: f.customerName, project: f.project, projectId: f.projectId || null, amountReceived: f.amountReceived,
+        description: f.description, invoiceId: f.fromInvoiceId || null,
+        createdAt: new Date().toISOString()
+      };
+    } else {
+      record = {
+        id: id, kind: f.kind, docNumber: f.docNumber, issueDate: f.issueDate,
+        customerName: f.customerName, project: f.project, projectId: f.projectId || null, workLocation: f.workLocation,
+        periodStart: f.periodStart, periodEnd: f.periodEnd, dueDate: f.dueDate, dueDateNote: f.dueDateNote,
+        items: f.items, remarks: f.remarks, paymentTerms: f.paymentTerms || "", quoteId: f.fromQuoteId || null,
+        createdAt: new Date().toISOString()
+      };
+      if (f.kind === "invoice") {
+        record.paymentStatus = "未入金";
+        record.paidDate = null;
+        record.changeOrderIds = f.selectedChangeOrderIds || [];
+      }
+    }
+    list.push(record);
+    saveList(key, list);
+    if (f.kind === "invoice" && record.changeOrderIds && record.changeOrderIds.length) markChangeOrdersBilled(record.changeOrderIds, id);
+    return record;
+  }
+
+  function createCaptureRecord(rawText, structured, confirmed) {
+    var list = loadList(KEYS.captures);
+    var rec = { id: newId("c"), rawText: rawText, structured: structured, confirmed: confirmed, projectId: confirmed.projectId || null, status: "confirmed", createdAt: new Date().toISOString() };
+    list.push(rec);
+    saveList(KEYS.captures, list);
+    return rec;
+  }
+
+  function createExpenseRecord(data) {
+    var list = loadList(KEYS.receipts);
+    var rec = {
+      id: newId("r"), imageDataUrl: data.imageDataUrl, store: data.store, amount: data.amount,
+      date: data.date, project: data.project, projectId: data.projectId || null, category: data.category,
+      createdAt: new Date().toISOString()
+    };
+    list.push(rec);
+    saveList(KEYS.receipts, list);
+    return rec;
+  }
+
+  // ---- 入金（払い戻し不可の削除ではなく、記録の追加・取消で管理。分割入金に対応） ----
+  function loadPayments() { return loadList(KEYS.payments); }
+  function savePayments(list) { return saveList(KEYS.payments, list); }
+  function paymentsForInvoice(invoiceId) { return loadPayments().filter(function (p) { return p.invoiceId === invoiceId; }); }
+  function recordPayment(invoiceId, amount, date, note) {
+    var list = loadPayments();
+    var rec = { id: newId("pay"), invoiceId: invoiceId, amount: Number(amount) || 0, date: date || todayStr(), note: note || "", createdAt: new Date().toISOString() };
+    list.push(rec);
+    savePayments(list);
+    return rec;
+  }
+  function deletePayment(paymentId) { savePayments(loadPayments().filter(function (p) { return p.id !== paymentId; })); }
+  // 請求金額に対する入金状況をまとめる。旧バージョンで記録された簡易ステータス(paymentStatus)しかない請求書とも互換
+  function getInvoicePaymentInfo(invoiceId, total) {
+    var list = paymentsForInvoice(invoiceId);
+    var paid = list.reduce(function (sum, p) { return sum + (Number(p.amount) || 0); }, 0);
+    if (list.length === 0) {
+      var found = findDoc(invoiceId);
+      if (found && found.doc.paymentStatus === "入金済み") {
+        return { paidAmount: total, remaining: 0, status: "入金済み", payments: [], legacy: true };
+      }
+    }
+    var remaining = Math.max(0, total - paid);
+    var status = paid === 0 ? "未入金" : (remaining === 0 ? "入金済み" : "一部入金");
+    return { paidAmount: paid, remaining: remaining, status: status, payments: list, legacy: false };
+  }
+
+  // ---- 現場写真 ----
+  var PHOTO_PHASES = ["着工前", "施工中", "完了", "追加工事"];
+  function loadPhotos() { return loadList(KEYS.photos); }
+  function savePhotos(list) { return saveList(KEYS.photos, list); }
+  function createPhotoRecord(projectId, imageDataUrl, phase, caption) {
+    var list = loadPhotos();
+    var rec = { id: newId("photo"), projectId: projectId, imageDataUrl: imageDataUrl, phase: phase, caption: caption || "", createdAt: new Date().toISOString() };
+    list.push(rec);
+    savePhotos(list);
+    return rec;
+  }
+  function deletePhoto(photoId) { savePhotos(loadPhotos().filter(function (p) { return p.id !== photoId; })); }
+
+  // ---- スケジュール（予定） ----
+  function loadScheduleEvents() { return loadList(KEYS.scheduleEvents); }
+  function saveScheduleEvents(list) { return saveList(KEYS.scheduleEvents, list); }
+  function createScheduleEvent(projectId, title, date, startTime, attendees) {
+    var list = loadScheduleEvents();
+    var rec = { id: newId("sched"), projectId: projectId, title: title, date: date, startTime: startTime || "", attendees: attendees || "", createdAt: new Date().toISOString() };
+    list.push(rec);
+    saveScheduleEvents(list);
+    return rec;
+  }
+  function deleteScheduleEvent(id) { saveScheduleEvents(loadScheduleEvents().filter(function (s) { return s.id !== id; })); }
+  function todaysScheduleEvents() {
+    var today = todayStr();
+    return loadScheduleEvents().filter(function (s) { return s.date === today; })
+      .sort(function (a, b) { return (a.startTime || "").localeCompare(b.startTime || ""); });
+  }
+
+  // ============================================================
+  // Query層（読み取り専用。チャット・将来のAIから利用する問い合わせ関数）
+  // すべて既存のデータ操作層（loadX系）を呼ぶだけで、新しいデータは持たない。
+  // ============================================================
+  function getCustomers() { return loadCustomers(); }
+  function getProjects() { return loadProjects(); }
+  function getProjectById(projectId) { return findProject(projectId); }
+  function getSchedulesByDate(dateStr) {
+    return loadScheduleEvents().filter(function (s) { return s.date === dateStr; })
+      .sort(function (a, b) { return (a.startTime || "").localeCompare(b.startTime || ""); });
+  }
+  function getTomorrowSchedules() { return getSchedulesByDate(addDays(todayStr(), 1)); }
+  function getSchedulesByProject(projectId) { return loadScheduleEvents().filter(function (s) { return s.projectId === projectId; }); }
+  function getQuotesByProject(projectId) { return loadList(KEYS.quotes).filter(function (d) { return d.projectId === projectId; }); }
+  function getChangeOrdersByProject(projectId) { return loadChangeOrders().filter(function (c) { return c.projectId === projectId; }); }
+  function getInvoicesByProject(projectId) { return loadList(KEYS.invoices).filter(function (d) { return d.projectId === projectId; }); }
+  function getPaymentReceiptsByProject(projectId) { return loadList(KEYS.paymentReceipts).filter(function (d) { return d.projectId === projectId; }); }
+  function getExpensesByProject(projectId) { return loadList(KEYS.receipts).filter(function (d) { return d.projectId === projectId; }); }
+  function getPhotosByProject(projectId) { return loadPhotos().filter(function (p) { return p.projectId === projectId; }); }
+  function getPaymentsByProject(projectId) {
+    var invoiceIds = getInvoicesByProject(projectId).map(function (i) { return i.id; });
+    return loadPayments().filter(function (p) { return invoiceIds.indexOf(p.invoiceId) !== -1; });
+  }
+  // 見積はあるがまだ一件も請求書が作られていない案件
+  function getUnbilledProjects() {
+    return getProjects().filter(function (p) {
+      return getQuotesByProject(p.id).length > 0 && getInvoicesByProject(p.id).length === 0;
+    });
+  }
+  // 入金が完了していない請求書（未入金・一部入金）
+  function getUnpaidInvoices() {
+    return loadList(KEYS.invoices).filter(function (inv) {
+      var total = calcTotals(inv.items).total;
+      return getInvoicePaymentInfo(inv.id, total).status !== "入金済み";
+    });
+  }
+  function getMonthlyInvoicedTotal(yearMonth) {
+    return loadList(KEYS.invoices).filter(function (inv) { return (inv.issueDate || "").slice(0, 7) === yearMonth; })
+      .reduce(function (sum, inv) { return sum + calcTotals(inv.items).total; }, 0);
+  }
+  function getMonthlyPaidTotal(yearMonth) {
+    return loadPayments().filter(function (p) { return (p.date || "").slice(0, 7) === yearMonth; })
+      .reduce(function (sum, p) { return sum + (Number(p.amount) || 0); }, 0);
+  }
+  // 本文中に登録済みの案件名・顧客名が含まれていないか検索する（あいまい一致の代わりに実データと突き合わせる）
+  function matchKnownProjects(text) {
+    return getProjects().filter(function (p) { return p.name && text.indexOf(p.name) !== -1; });
+  }
+  function matchKnownCustomers(text) {
+    return getCustomers().filter(function (c) { return c.name && text.indexOf(c.name) !== -1; });
+  }
+  // 「顧客・案件」として正式登録されていない案件名も、メモ・見積・請求の自由テキストから拾う
+  function findFreeTextProjectMatches(text) {
+    var names = {};
+    loadList(KEYS.captures).forEach(function (c) {
+      var p = c.confirmed && c.confirmed.project;
+      if (p && text.indexOf(p) !== -1) names[p] = true;
+    });
+    [KEYS.quotes, KEYS.invoices].forEach(function (key) {
+      loadList(key).forEach(function (d) { if (d.project && text.indexOf(d.project) !== -1) names[d.project] = true; });
+    });
+    return Object.keys(names);
+  }
+  function buildFreeTextProjectSummary(name) {
+    var memos = loadList(KEYS.captures).filter(function (c) { return c.confirmed && c.confirmed.project === name; });
+    var quotes = loadList(KEYS.quotes).filter(function (d) { return d.project === name; });
+    var invoices = loadList(KEYS.invoices).filter(function (d) { return d.project === name; });
+    return {
+      name: name, memos: memos, quotes: quotes, invoices: invoices,
+      quoteTotal: quotes.reduce(function (sum, q) { return sum + calcTotals(q.items).total; }, 0),
+      invoiceTotal: invoices.reduce(function (sum, i) { return sum + calcTotals(i.items).total; }, 0)
+    };
+  }
+
+  // ============================================================
+  // Phase 1 Chat Architecture: Layer 1-4
+  // ============================================================
+  
+  // ---- Layer 1: 質問解析層（ルールベース）----
+  // 入力: 自由形式の質問テキスト
+  // 出力: 構造化されたSearchIntent配列
+  
+  function extractDateRange(question) {
+    // 相対日付を ISO 日付に変換
+    if (/(今日|きょう)/.test(question)) {
+      return { from: todayStr(), to: todayStr() };
+    }
+    if (/明日|あした/.test(question)) {
+      return { from: addDays(todayStr(), 1), to: addDays(todayStr(), 1) };
+    }
+    if (/今週|こんしゅう/.test(question)) {
+      var today = new Date(todayStr());
+      var dayOfWeek = today.getDay();
+      var weekStart = addDays(todayStr(), -dayOfWeek);
+      var weekEnd = addDays(weekStart, 6);
+      return { from: weekStart, to: weekEnd };
+    }
+    if (/先週|せんしゅう/.test(question)) {
+      var today2 = new Date(todayStr());
+      var dayOfWeek2 = today2.getDay();
+      var weekStart2 = addDays(todayStr(), -dayOfWeek2 - 7);
+      var weekEnd2 = addDays(weekStart2, 6);
+      return { from: weekStart2, to: weekEnd2 };
+    }
+    if (/今月|こんげつ/.test(question)) {
+      var month = todayStr().slice(0, 7);
+      var start = month + "-01";
+      var end = addDays(start, 31);
+      end = end.slice(0, 7) === month ? end : addDays(month + "-01", -1);
+      return { from: start, to: end };
+    }
+    if (/先月|せんげつ/.test(question)) {
+      var month2 = addDays(todayStr(), -30).slice(0, 7);
+      var start2 = month2 + "-01";
+      var end2 = addDays(start2, 31);
+      end2 = end2.slice(0, 7) === month2 ? end2 : addDays(month2 + "-01", -1);
+      return { from: start2, to: end2 };
+    }
+    // 「8月13日」「8/13」パターン
+    var dateMatch = question.match(/(\d{1,4})年?(\d{1,2})月(\d{1,2})日?/);
+    if (dateMatch) {
+      var d = monthDayToIso(dateMatch[0]);
+      return { from: d, to: d };
+    }
+    return { from: null, to: null };
+  }
+
+  function extractProjectName(question) {
+    // 「同じ意味でも言い回しが違う質問」を一つの検索ロジックで処理するため、
+    // 顧客名・案件名・自由テキストを統一的に抽出する。
+    var projects = getProjects();
+    for (var i = 0; i < projects.length; i++) {
+      if (question.indexOf(projects[i].name) !== -1) {
+        return { id: projects[i].id, name: projects[i].name };
+      }
+    }
+    var customer = extractCustomerName(question);
+    if (customer) {
+      var customerProjects = getProjects().filter(function (p) { return p.customerId === customer.id; });
+      if (customerProjects.length === 1) return { id: customerProjects[0].id, name: customerProjects[0].name };
+      if (customerProjects.length > 1) return { customerId: customer.id, name: customer.name };
+    }
+    var freeMatch = findFreeTextProjectMatches(question);
+    if (freeMatch.length > 0) return { name: freeMatch[0] };
+    return null;
+  }
+
+  function extractCustomerName(question) {
+    // 顧客名を抽出。案件名と同じく、同一の質問理解ロジックに統合する。
+    var customers = getCustomers();
+    for (var i = 0; i < customers.length; i++) {
+      if (question.indexOf(customers[i].name) !== -1) {
+        return { id: customers[i].id, name: customers[i].name };
+      }
+    }
+    return null;
+  }
+
+  function inferCategories(question) {
+    // 質問から検索カテゴリを抽出する。固定のif文を増やすのではなく、
+    // ルールの組み合わせで自然言語の表現差を吸収する。
+    var categories = [];
+    var rules = [
+      { re: /(予定|スケジュール|何がある|何ある|いつ|明日|今日|今週|先週|日付)/, categories: ["scheduleEvents", "captures"] },
+      { re: /(買い出し|購入|買った|何を買|買う|物品|材料)/, categories: ["receipts", "captures"] },
+      { re: /(見積|見積書|見積額|いくら|金額|合計)/, categories: ["quotes"] },
+      { re: /(請求|請求書|未請求|請求済|支払|振込)/, categories: ["invoices", "payments"] },
+      { re: /(追加工事|変更工事|変更|工事)/, categories: ["changeOrders"] },
+      { re: /(入金|未入金|入金額|支払い済|支払い)/, categories: ["payments", "invoices"] },
+      { re: /(経費|費用|出費|支出|何で買った)/, categories: ["receipts"] },
+      { re: /(写真|画像|現場写真|写真ある|どうなってる|状況|進捗|どんな)/, categories: ["photos", "quotes", "invoices", "payments", "receipts", "scheduleEvents", "changeOrders"] },
+      { re: /(領収書|レシート|証拠|明細)/, categories: ["paymentReceipts", "receipts"] }
+    ];
+
+    rules.forEach(function (rule) {
+      if (rule.re.test(question)) {
+        rule.categories.forEach(function (category) {
+          if (categories.indexOf(category) === -1) categories.push(category);
+        });
+      }
+    });
+
+    if (categories.length === 0) {
+      categories = ["scheduleEvents", "quotes", "invoices", "changeOrders", "payments", "receipts", "photos", "captures"];
+    }
+
+    return categories;
+  }
+
+  function inferFilters(question) {
+    // 質問から「フィルタ条件」を推定
+    var filters = {};
+    
+    if (/(未請求|請求してない|まだ)/.test(question) && /請求/.test(question)) {
+      filters.status = "unbilled";
+    }
+    if (/(入金されてない|未入金|支払われてない)/.test(question)) {
+      filters.paymentStatus = "unpaid";
+    }
+    if (/(確定|承認|決定)/.test(question)) {
+      filters.status = "confirmed";
+    }
+    
+    return filters;
+  }
+
+  function interpretQuestion(question) {
+    // Layer 1: 質問を分解して構造化条件（SearchIntent）を生成
+    var dateRange = extractDateRange(question);
+    var projectInfo = extractProjectName(question);
+    var customerInfo = extractCustomerName(question);
+    var categories = inferCategories(question);
+    var filters = inferFilters(question);
+    
+    return {
+      intentType: "search",
+      searchIntents: [
+        {
+          projectId: projectInfo ? projectInfo.id : null,
+          projectName: projectInfo ? projectInfo.name : null,
+          customerId: customerInfo ? customerInfo.id : null,
+          customerName: customerInfo ? customerInfo.name : null,
+          dateRange: dateRange,
+          categories: categories,
+          filters: filters
+        }
+      ],
+      originalQuestion: question
+    };
+  }
+
+  // ---- Layer 2: データ横断検索層 ----
+  function crossSearchData(searchIntent) {
+    var targetProjects = [];
+    
+    if (searchIntent.projectId) {
+      targetProjects.push(getProjects().find(function (p) { return p.id === searchIntent.projectId; }));
+    } else if (searchIntent.projectName) {
+      targetProjects = getProjects().filter(function (p) { return p.name === searchIntent.projectName; });
+      if (targetProjects.length === 0) {
+        // フリーテキスト検索に該当するプロジェクト
+        var captures = loadList(KEYS.captures);
+        var quotes = loadList(KEYS.quotes);
+        var invoices = loadList(KEYS.invoices);
+        var names = new Set();
+        captures.concat(quotes).concat(invoices).forEach(function (doc) {
+          if (doc.projectNameFree && doc.projectNameFree.indexOf(searchIntent.projectName) !== -1) {
+            names.add(doc.projectNameFree);
+          }
+        });
+        names.forEach(function (name) {
+          targetProjects.push({ name: name, id: "free_" + name });
+        });
+      }
+    } else if (searchIntent.customerId) {
+      targetProjects = getProjects().filter(function (p) { return p.customerId === searchIntent.customerId; });
+    } else if (searchIntent.dateRange.from) {
+      targetProjects = getProjects();
+    }
+    
+    // 各カテゴリでデータを検索
+    var result = {
+      projects: targetProjects.filter(Boolean),
+      categories: {}
+    };
+    
+    searchIntent.categories.forEach(function (category) {
+      result.categories[category] = [];
+      
+      var allItems = loadList(KEYS[category]) || [];
+      allItems.forEach(function (item) {
+        if (!item.projectId) return;
+        if (!targetProjects.some(function (p) { return p && p.id === item.projectId; })) return;
+        
+        // フィルタ適用
+        if (searchIntent.filters.status === "unbilled" && category === "quotes") {
+          var invoices = loadList(KEYS.invoices).filter(function (inv) { return inv.projectId === item.projectId; });
+          if (invoices.length > 0) return;
+        }
+        if (searchIntent.filters.paymentStatus === "unpaid" && category === "invoices") {
+          var payments = loadList(KEYS.payments).filter(function (p) { return p.invoiceId === item.id; });
+          var totalPaid = payments.reduce(function (sum, p) { return sum + (p.amount || 0); }, 0);
+          var totalAmount = calcTotals(item.items).total;
+          if (totalPaid >= totalAmount) return;
+        }
+        
+        // 日付範囲で検索
+        if (searchIntent.dateRange.from && item.date) {
+          if (item.date < searchIntent.dateRange.from || item.date > searchIntent.dateRange.to) return;
+        }
+        
+        result.categories[category].push(item);
+      });
+    });
+    
+    return result;
+  }
+
+  // ---- Layer 3: 案件統合層 ----
+  function buildProjectSnapshot(projectId, allData) {
+    var project = getProjects().find(function (p) { return p.id === projectId; });
+    if (!project) return null;
+    
+    var customer = getCustomers().find(function (c) { return c.id === project.customerId; });
+    var sel = projectSelectionInfo(projectId);
+    
+    var quotes = allData.categories.quotes || [];
+    var invoices = allData.categories.invoices || [];
+    var changeOrders = allData.categories.changeOrders || [];
+    var payments = allData.categories.payments || [];
+    var receipts = allData.categories.receipts || [];
+    var photos = allData.categories.photos || [];
+    var scheduleEvents = allData.categories.scheduleEvents || [];
+    
+    // 金銭情報を計算
+    var quoteAmount = quotes.reduce(function (sum, q) { return sum + calcTotals(q.items).total; }, 0);
+    var invoiceAmount = invoices.reduce(function (sum, inv) { return sum + calcTotals(inv.items).total; }, 0);
+    var changeOrderAmount = changeOrders.reduce(function (sum, c) { return sum + (c.amount || 0); }, 0);
+    var paidAmount = payments.reduce(function (sum, p) { return sum + (p.amount || 0); }, 0);
+    var expenseAmount = receipts.reduce(function (sum, r) { return sum + (r.amount || 0); }, 0);
+    
+    var financials = {
+      quoteAmount: quoteAmount,
+      changeOrderAmount: changeOrderAmount,
+      invoiceAmount: invoiceAmount,
+      paidAmount: paidAmount,
+      unpaidAmount: invoiceAmount - paidAmount,
+      expenseAmount: expenseAmount,
+      profit: invoiceAmount - expenseAmount
+    };
+    
+    return {
+      projectId: projectId,
+      customer: customer,
+      project: project,
+      selection: sel,
+      financials: financials,
+      documents: {
+        quotes: quotes,
+        invoices: invoices,
+        changeOrders: changeOrders
+      },
+      payments: payments,
+      receipts: receipts,
+      photos: photos,
+      scheduleEvents: scheduleEvents
+    };
+  }
+
+  // ---- Layer 4: 回答生成層 ----
+  function generateAnswer(originalQuestion, projectSnapshot) {
+    if (!projectSnapshot) {
+      return {
+        text: "該当する案件が見つかりませんでした。登録されている案件名・顧客名の中で一致するものがないため、質問の対象を特定できていません。"
+      };
+    }
+
+    var snap = projectSnapshot;
+    var fin = snap.financials;
+
+    // 「どうなってる？」「状況」→ 全体サマリー
+    if (/どうなってる|状況|進捗/.test(originalQuestion)) {
+      var text = snap.selection.projectName + "の状況：\n";
+
+      if (fin.quoteAmount > 0) {
+        text += "・見積：" + yen(fin.quoteAmount) + "\n";
+      } else {
+        text += "・見積：未登録\n";
+      }
+
+      if (fin.changeOrderAmount > 0) {
+        text += "・追加工事：" + yen(fin.changeOrderAmount) + "\n";
+      }
+
+      if (fin.invoiceAmount > 0) {
+        text += "・請求：" + yen(fin.invoiceAmount) + "\n";
+        text += "・入金：" + yen(fin.paidAmount) + "\n";
+        if (fin.unpaidAmount > 0) {
+          text += "（未入金：" + yen(fin.unpaidAmount) + "）\n";
+        }
+      } else {
+        text += "・請求：未登録\n";
+      }
+
+      if (fin.expenseAmount > 0) {
+        text += "・経費：" + yen(fin.expenseAmount);
+      }
+
+      if (snap.photos.length > 0) {
+        text += "\n・写真：" + snap.photos.length + " 枚";
+      }
+
+      return { text: text, data: snap, links: [] };
+    }
+
+    if (/いくら|金額|合計/.test(originalQuestion)) {
+      var text2 = "";
+      if (/見積/.test(originalQuestion)) {
+        text2 = fin.quoteAmount > 0 ? "見積：" + yen(fin.quoteAmount) : "見積が登録されていません。";
+      } else if (/請求/.test(originalQuestion)) {
+        text2 = fin.invoiceAmount > 0 ? "請求：" + yen(fin.invoiceAmount) + (fin.unpaidAmount > 0 ? "（未入金：" + yen(fin.unpaidAmount) + "）" : "") : "請求が登録されていません。";
+      } else if (/経費/.test(originalQuestion)) {
+        text2 = fin.expenseAmount > 0 ? "経費：" + yen(fin.expenseAmount) : "経費が登録されていません。";
+      } else {
+        text2 = "見積：" + yen(fin.quoteAmount) + "\n請求：" + yen(fin.invoiceAmount) + "\n入金：" + yen(fin.paidAmount) + "\n経費：" + yen(fin.expenseAmount);
+      }
+      return { text: text2, data: fin, links: [] };
+    }
+    
+    // 「写真ある？」→ 写真の有無
+    if (/写真/.test(originalQuestion)) {
+      if (snap.photos.length === 0) {
+        return { text: "写真の登録がありません。" };
+      }
+      return { text: "写真が" + snap.photos.length + "枚登録されています。", data: { count: snap.photos.length } };
+    }
+    
+    // 「追加工事ある？」→ 追加工事の有無
+    if (/追加工事|変更/.test(originalQuestion)) {
+      if (snap.documents.changeOrders.length === 0) {
+        return { text: "追加工事の登録がありません。" };
+      }
+      var coTotal = snap.documents.changeOrders.reduce(function (sum, c) { return sum + (c.amount || 0); }, 0);
+      return { text: "追加工事が" + snap.documents.changeOrders.length + "件、合計" + yen(coTotal) + "です。" };
+    }
+    
+    // デフォルト
+    return { text: "情報を検索しましたが、質問に完全にお答えできませんでした。", data: snap };
+  }
+
+  // ============================================================
+  // Chat Command Layer (旧)
+  // 自然文 → 構造化された intent {type, ...} への変換。
+  // 今はルールベース（キーワード・登録済みデータとの突き合わせ）だが、
+  // 将来AIを導入する場合はこの関数の代わりにAIが同じ形のintentを
+  // 生成し、そのままexecuteChatQueryへ渡せばよい。
+  // ============================================================
+  function interpretChatMessage(text) {
+    var t = (text || "").trim();
+    if (!t) return { type: "empty" };
+
+    // 「何がある/何かある/予定」のような明確な予定の聞き方だけを予定検索にする
+    // （「何を買った」等、日付＋別の話題の質問を誤って予定扱いしないため）
+    var scheduleAsk = /(何が?あ|何か ?あ|予定)/;
+    var dateMatch = t.match(/(\d{1,2})月(\d{1,2})日/);
+    if (/明日/.test(t) && scheduleAsk.test(t)) return { type: "schedule", date: addDays(todayStr(), 1), label: "明日" };
+    if (/今日/.test(t) && scheduleAsk.test(t)) return { type: "schedule", date: todayStr(), label: "今日" };
+    if (dateMatch && scheduleAsk.test(t)) return { type: "schedule", date: monthDayToIso(dateMatch[0]), label: dateMatch[0] };
+
+    // 買い出し・購入（「話す入力」の関連タスク欄から拾う）
+    if (/(買|購入)/.test(t) && /(何|なに|どこ)/.test(t)) {
+      return { type: "purchases", date: dateMatch ? monthDayToIso(dateMatch[0]) : null, label: dateMatch ? dateMatch[0] : "" };
+    }
+
+    if (/(請求.{0,3}(して.{0,2}ない|未|まだ))|未請求/.test(t)) return { type: "unbilled" };
+    if (/(入金.{0,3}(して.{0,2}ない|未))|未入金/.test(t)) return { type: "unpaid" };
+    if (/請求済/.test(t) || (/請求/.test(t) && /(した|してる|されてる|済み)/.test(t) && !/未/.test(t))) return { type: "billed" };
+    if (/入金済/.test(t) || (/入金/.test(t) && /(した|してる|されてる|済み)/.test(t) && !/未/.test(t))) return { type: "paid" };
+
+    if (/今月/.test(t) && /請求/.test(t)) return { type: "monthly_invoiced" };
+    if (/今月/.test(t) && /入金/.test(t)) return { type: "monthly_paid" };
+
+    var projMatch = matchKnownProjects(t);
+    if (/請求書/.test(t) && /(作|お願い|発行)/.test(t) && projMatch.length >= 1) {
+      return { type: "invoice_draft", candidates: projMatch };
+    }
+
+    var custMatch = matchKnownCustomers(t);
+    if (custMatch.length >= 1 && /(案件|現場)/.test(t)) return { type: "customer_projects", candidates: custMatch };
+
+    if (projMatch.length >= 1) return { type: "project_status", candidates: projMatch };
+    if (custMatch.length >= 1) return { type: "customer_projects", candidates: custMatch };
+
+    // 「顧客・案件」に正式登録されていなくても、メモ・見積・請求の自由テキストに
+    // 案件名らしき一致があれば、そこから分かる範囲で答える
+    var freeTextNames = findFreeTextProjectMatches(t);
+    if (freeTextNames.length >= 1) return { type: "project_status_loose", name: freeTextNames[0] };
+
+    return { type: "unknown", raw: t };
+  }
+
+  function buildProjectStatus(projectId) {
+    var sel = projectSelectionInfo(projectId);
+    var quotes = getQuotesByProject(projectId);
+    var invoices = getInvoicesByProject(projectId);
+    var changeOrders = getChangeOrdersByProject(projectId);
+    var schedule = getSchedulesByProject(projectId).filter(function (s) { return s.date >= todayStr(); })
+      .sort(function (a, b) { return (a.date + (a.startTime || "")).localeCompare(b.date + (b.startTime || "")); });
+    var quoteTotal = quotes.reduce(function (sum, q) { return sum + calcTotals(q.items).total; }, 0);
+    var invoiceSummaries = invoices.map(function (inv) {
+      var total = calcTotals(inv.items).total;
+      var info = getInvoicePaymentInfo(inv.id, total);
+      return { docNumber: inv.docNumber, id: inv.id, total: total, status: info.status };
+    });
+    var totalPaid = invoices.reduce(function (sum, inv) {
+      var total = calcTotals(inv.items).total;
+      return sum + getInvoicePaymentInfo(inv.id, total).paidAmount;
+    }, 0);
+    return {
+      projectId: projectId,
+      title: [sel.customerName, sel.projectName].filter(Boolean).join(" ／ "),
+      nextSchedule: schedule[0] || null,
+      hasQuote: quotes.length > 0, quoteTotal: quoteTotal,
+      unbilledChangeOrders: changeOrders.filter(function (c) { return !c.billed; }),
+      hasInvoice: invoices.length > 0, invoiceSummaries: invoiceSummaries,
+      totalPaid: totalPaid
+    };
+  }
+
+  function buildInvoiceDraftResponse(projectId) {
+    var sel = projectSelectionInfo(projectId);
+    var quotes = getQuotesByProject(projectId).sort(function (a, b) { return new Date(b.createdAt) - new Date(a.createdAt); });
+    var unbilledCO = unbilledChangeOrders(projectId);
+    if (quotes.length === 0 && unbilledCO.length === 0) {
+      return { text: (sel.projectName || "この案件") + "には見積も未請求の追加工事もまだありません。" };
+    }
+    var items = quotes.length ? quotes[0].items.map(function (it) { return Object.assign({}, it); }) : [];
+    var coItems = unbilledCO.map(function (c) { return { category: "追加工事", spec: c.description, qty: 1, unit: "式", unitPrice: c.amount }; });
+    var allItems = items.concat(coItems);
+    var total = calcTotals(allItems).total;
+    return {
+      text: sel.projectName + "の請求書案です。内容を確認して作成できます。",
+      invoiceDraft: {
+        projectId: projectId, items: allItems, total: total,
+        quoteId: quotes.length ? quotes[0].id : null,
+        changeOrderIds: unbilledCO.map(function (c) { return c.id; })
+      }
+    };
+  }
+
+  // ============================================================
+  // Query / Action ディスパッチ
+  // intent を受け取り、Query層の関数だけを呼んで応答を組み立てる。
+  // チャットUI（や将来のAI）はこの関数を経由するだけで、
+  // localStorageや個別のデータ配列には一切直接触れない。
+  // ============================================================
+  function executeChatQuery(intent) {
+    switch (intent.type) {
+      case "empty":
+        return { text: "何か聞いてください。例:「今日何ある？」「未請求ある？」「○○邸どうなってる？」" };
+      case "schedule": {
+        var events = getSchedulesByDate(intent.date);
+        var memoMatches = loadList(KEYS.captures).filter(function (c) { return resolveCaptureDateToIso(c) === intent.date; });
+        if (events.length === 0 && memoMatches.length === 0) return { text: intent.label + "の予定はありません。" };
+        var lines = events.map(function (s) {
+          var sel = projectSelectionInfo(s.projectId);
+          return (s.startTime ? s.startTime + " " : "") + (sel && sel.projectName ? sel.projectName + " " : "") + s.title;
+        });
+        var count = events.length + memoMatches.length;
+        return { text: intent.label + "の予定は" + count + "件です" + (memoMatches.length ? "（うちメモが" + memoMatches.length + "件）" : "") + "。", lines: lines, memoCards: memoMatches };
+      }
+      case "unbilled": {
+        var ub = getUnbilledProjects();
+        if (ub.length === 0) return { text: "未請求の案件はありません。" };
+        return { text: "未請求の案件が" + ub.length + "件あります。", projectCards: ub };
+      }
+      case "unpaid": {
+        var up = getUnpaidInvoices();
+        if (up.length === 0) return { text: "未入金の請求書はありません。" };
+        var remainTotal = up.reduce(function (sum, inv) {
+          var total = calcTotals(inv.items).total;
+          return sum + getInvoicePaymentInfo(inv.id, total).remaining;
+        }, 0);
+        return { text: "未入金が" + up.length + "件、残り合計 " + yen(remainTotal) + " です。", invoiceCards: up };
+      }
+      case "monthly_invoiced":
+        return { text: "今月の請求額は合計 " + yen(getMonthlyInvoicedTotal(todayStr().slice(0, 7))) + " です。" };
+      case "monthly_paid":
+        return { text: "今月の入金額は合計 " + yen(getMonthlyPaidTotal(todayStr().slice(0, 7))) + " です。" };
+      case "billed": {
+        var billedList = loadList(KEYS.invoices);
+        if (billedList.length === 0) return { text: "請求書はまだ1件も作成されていません。" };
+        return { text: "請求済みの請求書が" + billedList.length + "件あります。", invoiceCards: billedList };
+      }
+      case "paid": {
+        var paidList = loadList(KEYS.invoices).filter(function (inv) {
+          var total = calcTotals(inv.items).total;
+          return getInvoicePaymentInfo(inv.id, total).paidAmount > 0;
+        });
+        if (paidList.length === 0) return { text: "入金の記録がある請求書はまだありません。" };
+        return { text: "入金のある請求書が" + paidList.length + "件あります。", invoiceCards: paidList };
+      }
+      case "purchases": {
+        var purchaseCaptures = loadList(KEYS.captures).filter(function (c) {
+          if (!(c.confirmed && c.confirmed.tasks)) return false;
+          if (intent.date) return resolveCaptureDateToIso(c) === intent.date;
+          return true;
+        });
+        if (purchaseCaptures.length === 0) return { text: (intent.label ? intent.label + "の" : "") + "買い出し・購入に関するメモは見つかりませんでした。" };
+        return { text: (intent.label ? intent.label + "の" : "") + "買い出し関連のメモが" + purchaseCaptures.length + "件あります。", memoCards: purchaseCaptures };
+      }
+      case "project_status": {
+        if (intent.candidates.length === 0) return { text: "該当する案件が見つかりませんでした。" };
+        if (intent.candidates.length > 1) return { text: "案件が複数見つかりました。どちらですか？", projectCards: intent.candidates };
+        return { text: "", projectStatus: buildProjectStatus(intent.candidates[0].id) };
+      }
+      case "project_status_loose": {
+        var summary = buildFreeTextProjectSummary(intent.name);
+        return { text: "「" + intent.name + "」はまだ「顧客・案件」に正式登録されていません。関連する記録から分かる範囲でお答えします。", freeTextSummary: summary };
+      }
+      case "customer_projects": {
+        if (intent.candidates.length === 0) return { text: "該当する顧客が見つかりませんでした。" };
+        var customer = intent.candidates[0];
+        var projs = getProjects().filter(function (p) { return p.customerId === customer.id; });
+        if (projs.length === 0) return { text: customer.name + "の案件は見つかりませんでした。" };
+        return { text: customer.name + "の案件が" + projs.length + "件あります。", projectCards: projs };
+      }
+      case "invoice_draft": {
+        if (intent.candidates.length === 0) return { text: "該当する案件が見つかりませんでした。" };
+        if (intent.candidates.length > 1) return { text: "案件が複数見つかりました。どちらですか？", projectCards: intent.candidates };
+        return buildInvoiceDraftResponse(intent.candidates[0].id);
+      }
+      default:
+        return { text: "すみません、まだその質問にはうまく答えられません。「今日の予定」「未請求」「未入金」「○○邸どうなってる？」「田中さんの案件」のように聞いてみてください。" };
+    }
+  }
+
+  function loadCompany() {
+    try { return Object.assign({}, DEFAULT_COMPANY, JSON.parse(localStorage.getItem(KEYS.company)) || {}); } catch (e) { return Object.assign({}, DEFAULT_COMPANY); }
+  }
+  function saveCompany(c) { localStorage.setItem(KEYS.company, JSON.stringify(c)); }
+
+  var DOC_KEY_BY_KIND = { quote: "quotes", invoice: "invoices", receipt: "paymentReceipts" };
+  var DOC_PREFIX_BY_KIND = { quote: "EST", invoice: "INV", receipt: "RCP" };
+
+  function nextDocNumber(kind) {
+    var year = new Date().getFullYear();
+    var list = loadList(KEYS[DOC_KEY_BY_KIND[kind]]);
+    var seq = list.length + 1;
+    return DOC_PREFIX_BY_KIND[kind] + "-" + year + "-" + ("00" + seq).slice(-3);
+  }
+
+  // いただいた見積書・請求書・領収書サンプルの内容を初期値として使用（すべて作成後に編集可能）
+  var DEFAULT_DUE_NOTE = { quote: "発行日より30日間", invoice: "月末締め翌月末払い" };
+  var DEFAULT_REMARKS = {
+    quote: "・本見積は現地調査時点の内容に基づきます。解体後に追加工事が判明した場合、別途ご相談させていただきます。\n・有効期限を過ぎた場合は再見積いたします。",
+    invoice: "恐れ入りますが、振込手数料はご負担ください。"
+  };
+  var DEFAULT_PAYMENT_TERMS = "ご契約時　30％\n着工時　40％\n完了・引渡時　30％";
+  var DEFAULT_RECEIPT_DESCRIPTION = "工事費として";
+
+  function defaultDocForm(kind) {
+    var issueDate = todayStr();
+    if (kind === "receipt") {
+      return {
+        kind: "receipt", docNumber: nextDocNumber("receipt"), issueDate: issueDate,
+        customerName: "", project: "", amountReceived: 0, description: DEFAULT_RECEIPT_DESCRIPTION
+      };
+    }
+    return {
+      kind: kind, docNumber: nextDocNumber(kind), issueDate: issueDate,
+      customerName: "", project: "", workLocation: "", periodStart: "", periodEnd: "",
+      dueDate: addDays(issueDate, 30), dueDateNote: DEFAULT_DUE_NOTE[kind],
+      items: [{ category: "", spec: "", qty: 1, unit: "式", unitPrice: 0 }],
+      remarks: DEFAULT_REMARKS[kind],
+      paymentTerms: kind === "quote" ? DEFAULT_PAYMENT_TERMS : ""
+    };
+  }
+  function nl2br(s) {
+    return (s == null ? "" : String(s)).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>");
+  }
+
+  function findDoc(id) {
+    var kinds = ["quote", "invoice", "receipt"];
+    for (var k = 0; k < kinds.length; k++) {
+      var key = KEYS[DOC_KEY_BY_KIND[kinds[k]]];
+      var doc = loadList(key).find(function (x) { return x.id === id; });
+      if (doc) return { doc: doc, kind: kinds[k], key: key };
+    }
+    return null;
+  }
+
+  // ---- 「AI整理」の仮実装（ルールベース。将来: 無料枠LLMに差し替え予定） ----
+  function monthDayToIso(s) {
+    var m = s && s.match(/(\d{1,2})月(\d{1,2})日/);
+    if (!m) return "";
+    return new Date().getFullYear() + "-" + ("0" + m[1]).slice(-2) + "-" + ("0" + m[2]).slice(-2);
+  }
+  // 「話す入力」メモの日付欄（自由テキスト）を可能な範囲でISO日付に変換する
+  // （メモを作った日を基準に「今日」「明日」等の相対表現を解決する）
+  function resolveCaptureDateToIso(capture) {
+    var d = (capture.confirmed && capture.confirmed.date) || "";
+    var createdDate = (capture.createdAt || "").slice(0, 10);
+    if (/^\d{1,2}月\d{1,2}日$/.test(d)) return monthDayToIso(d);
+    if (d === "今日") return createdDate;
+    if (d === "明日") return createdDate ? addDays(createdDate, 1) : "";
+    if (d === "明後日") return createdDate ? addDays(createdDate, 2) : "";
+    return "";
+  }
+
+  function structureText(raw) {
+    var date = "";
+    var dateMatch = raw.match(/(明日|今日|明後日|\d{1,2}月\d{1,2}日)/);
+    if (dateMatch) date = dateMatch[1];
+    var time = "";
+    var timeMatch = raw.match(/\d{1,2}時(\d{1,2}分)?/);
+    if (timeMatch) time = timeMatch[0];
+    var customer = "";
+    var customerMatch = raw.match(/([^\s、。]{1,10})(さん|様|工務店|建設|商店)/);
+    if (customerMatch) customer = customerMatch[1] + customerMatch[2];
+    var project = "";
+    var projectMatch = raw.match(/([^\s、。]{1,12}邸)/);
+    if (projectMatch) project = projectMatch[1];
+
+    var workLocation = "";
+    var locMatch = raw.match(/(?:現場|場所)は?([^\s、。]{1,20})/);
+    if (locMatch) workLocation = locMatch[1];
+
+    var periodStart = "", periodEnd = "";
+    var periodMatch = raw.match(/(\d{1,2}月\d{1,2}日)\s*(?:から|〜|~|-)\s*(\d{1,2}月\d{1,2}日)/);
+    if (periodMatch) {
+      periodStart = monthDayToIso(periodMatch[1]);
+      periodEnd = monthDayToIso(periodMatch[2]);
+    }
+
+    var tasks = "";
+    var taskMatch = raw.match(/([^\s、。]{1,20}(?:買|購入)[^\s、。]{0,10})/);
+    if (taskMatch) tasks = taskMatch[1];
+
+    return {
+      date: date, time: time, customer: customer, project: project,
+      workLocation: workLocation, periodStart: periodStart, periodEnd: periodEnd,
+      content: raw, tasks: tasks
+    };
+  }
+
+  function calcTotals(items) {
+    var subtotal = items.reduce(function (sum, it) {
+      return sum + (Number(it.qty) || 0) * (Number(it.unitPrice) || 0);
+    }, 0);
+    var tax = Math.round(subtotal * 0.1);
+    return { subtotal: subtotal, tax: tax, total: subtotal + tax };
+  }
+
+  // 領収金額（税込）から税抜額・消費税額を逆算する
+  function receiptTaxBreakdown(amount) {
+    var total = Number(amount) || 0;
+    var excluded = Math.round(total / 1.1);
+    return { excluded: excluded, tax: total - excluded, total: total };
+  }
+
+  // ---- 音声入力（Web Speech API。file://等の非セキュアな環境やブラウザ非対応では動作しない） ----
+  var SpeechRecognitionApi = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var recognition = null;
+  var isListening = false;
+
+  function micSupportInfo() {
+    if (!SpeechRecognitionApi) return { ok: false, reason: "このブラウザは音声入力に対応していません。" };
+    if (!window.isSecureContext) return { ok: false, reason: "ファイルを直接開いているため、この環境ではマイクを使えません（Netlify等HTTPS配信後は使用できます）。" };
+    return { ok: true, reason: "" };
+  }
+
+  function toggleMic(onResultAppend, onStateChange, onInterim) {
+    var info = micSupportInfo();
+    if (!info.ok) { onStateChange(false, info.reason); return; }
+    if (isListening) {
+      recognition && recognition.stop();
+      return;
+    }
+    recognition = new SpeechRecognitionApi();
+    recognition.lang = "ja-JP";
+    recognition.interimResults = true;
+    recognition.continuous = true;
+    recognition.onstart = function () { isListening = true; onStateChange(true, ""); };
+    recognition.onend = function () { isListening = false; onStateChange(false, ""); };
+    recognition.onerror = function (e) {
+      isListening = false;
+      if (e.error === "no-speech" || e.error === "aborted") { onStateChange(false, ""); return; }
+      var msg = "マイクを利用できませんでした（" + e.error + "）。テキストで入力してください。";
+      onStateChange(false, msg);
+    };
+    recognition.onresult = function (e) {
+      var finalText = "";
+      var interimText = "";
+      for (var i = e.resultIndex; i < e.results.length; i++) {
+        var t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) finalText += t;
+        else interimText += t;
+      }
+      if (finalText) onResultAppend(finalText);
+      if (onInterim) onInterim(interimText);
+    };
+    try { recognition.start(); } catch (err) { onStateChange(false, "マイクを開始できませんでした。"); }
+  }
+
+  // ---- 画像リサイズ（localStorage容量を圧迫しないよう縮小してから保存） ----
+  function resizeImageFile(file, maxWidth, quality, cb) {
+    var img = new Image();
+    var reader = new FileReader();
+    reader.onload = function (e) {
+      img.onload = function () {
+        var scale = Math.min(1, maxWidth / img.width);
+        var w = Math.round(img.width * scale);
+        var h = Math.round(img.height * scale);
+        var canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        cb(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // ---- レシートOCR（Tesseract.js無料版。認識精度は簡易的なため必ず人が確認する前提） ----
+  function runReceiptOCR(imageDataUrl, statusEl, storeInput, amountInput) {
+    if (typeof Tesseract === "undefined") {
+      statusEl.textContent = "OCRの準備ができていません。通信環境を確認し、少し待ってから再度お試しください。";
+      return;
+    }
+    statusEl.textContent = "読み取り中…（初回は言語データの取得で数十秒かかることがあります）";
+    Tesseract.recognize(imageDataUrl, "jpn+eng")
+      .then(function (result) {
+        var text = (result && result.data && result.data.text) || "";
+        var numMatches = text.match(/[\d,]{3,9}/g) || [];
+        var nums = numMatches
+          .map(function (m) { return Number(m.replace(/,/g, "")); })
+          .filter(function (n) { return n >= 100 && n <= 10000000; });
+        var amount = nums.length ? Math.max.apply(null, nums) : null;
+        var firstLine = text.split(/\r?\n/).map(function (s) { return s.trim(); }).filter(Boolean)[0] || "";
+        if (amount) amountInput.value = amount;
+        if (firstLine) storeInput.value = firstLine;
+        statusEl.textContent = (amount || firstLine)
+          ? "読み取りました。内容を必ず確認・修正してください（精度は簡易的です）。"
+          : "うまく読み取れませんでした。手入力してください。";
+      })
+      .catch(function () {
+        statusEl.textContent = "読み取りに失敗しました。手入力してください。";
+      });
+  }
+
+  // ---- Excel(.xlsx)出力（SheetJS無料版。数値のみ・数式や色などの装飾は非対応） ----
+  function exportXlsx(d, kind) {
+    if (typeof XLSX === "undefined") { alert("Excel出力の準備ができていません。通信環境を確認し、少し待ってから再度お試しください。"); return; }
+    var company = loadCompany();
+
+    if (kind === "receipt") {
+      var rt = receiptTaxBreakdown(d.amountReceived);
+      var rrows = [
+        ["領収書"], [],
+        ["領収書番号", d.docNumber, "", "発行日", d.issueDate],
+        ["宛名", (d.customerName || "") + " 様"], [],
+        ["金額", d.amountReceived], [],
+        ["税抜金額", rt.excluded], ["消費税(10%)", rt.tax], [],
+        ["但し書き", d.description || ""], [],
+        ["発行元", company.name || ""],
+        ["住所", (company.zip ? company.zip + " " : "") + (company.address || "")],
+        ["TEL/FAX", (company.tel || "") + " / " + (company.fax || "")],
+        ["登録番号", company.invoiceRegNo || ""], [],
+        ["※5万円以上の領収書には収入印紙の貼付が必要です（金額により印紙税額が異なります）。この出力は数値のみのため、印紙欄・押印欄は含まれません。"]
+      ];
+      var rws = XLSX.utils.aoa_to_sheet(rrows);
+      rws["!cols"] = [{ wch: 14 }, { wch: 26 }, { wch: 8 }, { wch: 8 }, { wch: 12 }];
+      var rwb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(rwb, rws, "領収書");
+      XLSX.writeFile(rwb, "領収書_" + (d.docNumber || d.id) + ".xlsx");
+      return;
+    }
+
+    var isInvoice = kind === "invoice";
+    var t = calcTotals(d.items);
+    var rows = [];
+    rows.push([isInvoice ? "請求書" : "御見積書"]);
+    rows.push([]);
+    rows.push([isInvoice ? "請求番号" : "見積番号", d.docNumber, "", "発行日", d.issueDate]);
+    rows.push(["顧客名", (d.customerName || "") + " 様"]);
+    rows.push([]);
+    rows.push(["件名", d.project || ""]);
+    rows.push(["工事場所", d.workLocation || ""]);
+    rows.push(["工期", (d.periodStart || "") + " 〜 " + (d.periodEnd || "")]);
+    rows.push([isInvoice ? "支払期限" : "有効期限", (d.dueDate || "") + (d.dueDateNote ? "（" + d.dueDateNote + "）" : "")]);
+    rows.push([]);
+    rows.push(["項目", "仕様・摘要", "数量", "単位", "単価", "金額"]);
+    d.items.forEach(function (it) {
+      rows.push([it.category || "", it.spec || "", Number(it.qty) || 0, it.unit || "", Number(it.unitPrice) || 0, (Number(it.qty) || 0) * (Number(it.unitPrice) || 0)]);
+    });
+    rows.push(["", "", "", "", "小計", t.subtotal]);
+    rows.push(["", "", "", "", "消費税(10%)", t.tax]);
+    rows.push(["", "", "", "", "合計", t.total]);
+    rows.push([]);
+    if (!isInvoice) rows.push(["お支払条件", d.paymentTerms || ""]);
+    rows.push(["備考", d.remarks || ""]);
+    rows.push([]);
+    rows.push(["発行元", company.name || ""]);
+    rows.push(["住所", (company.zip ? company.zip + " " : "") + (company.address || "")]);
+    rows.push(["TEL/FAX", (company.tel || "") + " / " + (company.fax || "")]);
+    rows.push(["登録番号", company.invoiceRegNo || ""]);
+    rows.push(["お振込先", [company.bankName, company.bankBranch, company.accountType, company.accountNumber].filter(Boolean).join(" ")]);
+    rows.push(["口座名義", company.accountHolder || ""]);
+
+    var ws = XLSX.utils.aoa_to_sheet(rows);
+    ws["!cols"] = [{ wch: 14 }, { wch: 26 }, { wch: 8 }, { wch: 8 }, { wch: 12 }, { wch: 12 }];
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, isInvoice ? "請求書" : "見積書");
+    XLSX.writeFile(wb, (isInvoice ? "請求書_" : "見積書_") + (d.docNumber || d.id) + ".xlsx");
+  }
+
+  // ---- ルーティング ----
+  var state = { view: "home" };
+  // チャット履歴はstateではなくモジュール変数で保持する（go()で画面遷移してもstateは
+  // 毎回作り直されるため。チャット専用のデータストア(localStorage等)は作らない）
+  var chatHistory = [];
+  var lastInvoiceDraft = null;
+
+  function go(view, payload) {
+    state = { view: view };
+    if (payload) Object.assign(state, payload);
+    render();
+  }
+  function patch(payload) { Object.assign(state, payload); render(); }
+
+  function render() {
+    var app = document.getElementById("app");
+    var v = state.view;
+    var html;
+    if (v === "home") html = renderHome();
+    else if (v === "capture") html = renderCapture();
+    else if (v === "confirm") html = renderConfirm();
+    else if (v === "history") html = renderHistory();
+    else if (v === "detail") html = renderDetail(state.detailId);
+    else if (v === "receiptList") html = renderReceiptList();
+    else if (v === "receiptCapture") html = renderReceiptCapture();
+    else if (v === "receiptDetail") html = renderReceiptDetail(state.receiptId);
+    else if (v === "docList") html = renderDocList();
+    else if (v === "docForm") html = renderDocForm();
+    else if (v === "docDetail") html = renderDocDetail(state.docId);
+    else if (v === "settings") html = renderSettings();
+    else if (v === "projectPicker") html = renderProjectPicker();
+    else if (v === "projectList") html = renderProjectList();
+    else if (v === "projectDetail") html = renderProjectDetail(state.projectId);
+    else if (v === "changeOrderReview") html = renderChangeOrderReview();
+    else if (v === "photoCapture") html = renderPhotoCapture();
+    else if (v === "photoDetail") html = renderPhotoDetail(state.photoId);
+    else if (v === "scheduleForm") html = renderScheduleForm();
+    else if (v === "chat") html = renderChat();
+    else html = renderHome();
+    app.innerHTML = html + renderBottomNav();
+    bindEvents();
+    var chatLog = document.getElementById("chatLog");
+    if (chatLog) window.scrollTo(0, document.body.scrollHeight);
+    // iOS で音声入力画面を開いた際、mic ボタンをフォーカスしてキーボード自動表示を回避
+    if (v === "capture") {
+      setTimeout(function () {
+        var micBtn = document.getElementById("micBtn");
+        if (micBtn) micBtn.focus();
+      }, 100);
+    }
+  }
+
+  // ---------------- 下部ナビゲーション ----------------
+  function renderBottomNav() {
+    var v = state.view;
+    function item(view, icon, label, activeViews) {
+      var active = activeViews.indexOf(v) !== -1;
+      return '<button class="bottom-nav-item' + (active ? " active" : "") + '" data-go="' + view + '"><span>' + icon + '</span><span>' + label + '</span></button>';
+    }
+    return (
+      '<div class="no-print bottom-nav">' +
+      item("home", "🏠", "ホーム", ["home"]) +
+      item("chat", "💬", "チャット", ["chat"]) +
+      item("projectList", "🏗", "案件", ["projectList", "projectDetail"]) +
+      item("docList", "📄", "書類", ["docList", "docForm", "docDetail"]) +
+      '</div>'
+    );
+  }
+
+  // ---------------- HOME ----------------
+  function renderHome() {
+    var todaySched = todaysScheduleEvents();
+    var todayHtml = todaySched.length === 0 ? "" :
+      '<label style="margin-top:4px">今日の予定</label>' +
+      todaySched.map(function (s) {
+        var sel = projectSelectionInfo(s.projectId);
+        return '<div class="card" data-project="' + s.projectId + '"><div class="customer-project">' + (s.startTime ? s.startTime + " " : "") + esc(s.title) + '</div>' +
+          (sel ? '<div class="content-preview">' + [sel.customerName, sel.projectName].filter(Boolean).join(" ／ ") + '</div>' : "") + '</div>';
+      }).join("");
+    return (
+      '<h1>建築業 音声業務管理</h1>' +
+      '<p class="subtitle">プロトタイプ版（通信は最小限・課金なし）</p>' +
+      '<div class="card" data-go="chat" style="text-align:left">' +
+      '<div class="customer-project">💬 何でも聞く</div>' +
+      '<div class="content-preview">「今日何ある？」「未請求ある？」「○○邸どうなってる？」</div></div>' +
+      todayHtml +
+      '<div class="home-grid">' +
+      '  <button class="big-btn" data-go="capture"><span class="icon">🎙️</span><span>話す・入力</span><span class="desc">メモ、または見積書の下書きに</span></button>' +
+      '  <button class="big-btn" data-go="docList"><span class="icon">📄</span><span>見積・請求</span><span class="desc">作成してPDF/Excel</span></button>' +
+      '  <button class="big-btn" data-go="receiptList"><span class="icon">📸</span><span>レシート</span><span class="desc">撮って経費登録</span></button>' +
+      '  <button class="big-btn" data-go="history"><span class="icon">📋</span><span>履歴</span><span class="desc">保存した現場メモ</span></button>' +
+      '</div>' +
+      '<button class="secondary-btn" data-go="projectList" style="margin-top:12px">👷 顧客・案件</button>' +
+      '<button class="ghost-btn" data-go="settings">⚙️ 自社情報を設定（見積書・請求書に自動反映）</button>' +
+      '<div class="notice">' +
+      '  現状わかっていること:<br>' +
+      '  ・音声入力はChrome/Edge等の対応ブラウザかつ安全な接続時のみ動作します（file://で直接開いている場合は動きません）<br>' +
+      '  ・「話す・入力」の確認画面から「この内容で見積書を作成」を選ぶと、顧客・案件・現場・工期・内容を見積書の下書きに引き継げます<br>' +
+      '  ・レシートは無料の簡易OCR(Tesseract.js)で店舗名・金額を自動読み取りしますが、精度は簡易的なため必ず確認・修正してください<br>' +
+      '  ・見積書/請求書/領収書はいただいた実物フォーマットに合わせたレイアウトです。「印刷/PDF保存」は見た目そのまま、「Excelダウンロード」は数値のみ（数式・色などの装飾は無料ライブラリの制約で非対応）です<br>' +
+      '  ・Excelダウンロード・レシートOCR機能は、無料の外部ライブラリ(SheetJS / Tesseract.js)を読み込むため通信が発生します。それ以外は端末内で完結します<br>' +
+      '  ・👷案件詳細から、追加工事・入金（分割対応）・写真・予定も記録できます' +
+      '</div>'
+    );
+  }
+
+  // ---------------- 現場メモ: 入力 ----------------
+  function renderCapture() {
+    var info = micSupportInfo();
+    return (
+      '<header><button class="back" data-go="home">← 戻る</button><h1>入力する</h1></header>' +
+      '<label>あったことを、話すように書いてください</label>' +
+      '<textarea id="rawInput" placeholder="例: 8月20日9時から田中さんの○○邸。材料を買ってから現場に行く">' + (state.pendingRaw || "") + '</textarea>' +
+      '<div class="mic-row">' +
+      '  <button class="mic-btn" id="micBtn" title="音声入力">🎙️</button>' +
+      '  <div style="flex:1;align-self:center" id="micStatus" class="mic-hint">' + (info.ok ? "タップして開始 → もう一度タップで終了" : info.reason) + '</div>' +
+      '</div>' +
+      '<button class="primary-btn" id="structureBtn">整理する</button>'
+    );
+  }
+
+  function renderConfirm() {
+    var s = state.pendingStructured || {};
+    var sel = state.pendingProjectSelection;
+    return (
+      '<header><button class="back" data-go="capture">← 戻る</button><h1>内容の確認</h1></header>' +
+      '<div class="badge">AIによる下書きです。必ず内容を確認してください</div>' +
+      '<label>案件に紐付ける（任意・見積書等に自動反映されます）</label>' +
+      '<button class="secondary-btn" id="pickProjectBtn" style="margin-top:0">🔗 ' + (sel ? [sel.customerName, sel.projectName].filter(Boolean).join(" ／ ") : "案件を選ぶ") + '</button>' +
+      '<div class="field-row"><label>日付</label><input type="text" id="f_date" value="' + esc(s.date) + '"></div>' +
+      '<div class="field-row"><label>時間</label><input type="text" id="f_time" value="' + esc(s.time) + '"></div>' +
+      '<div class="field-row"><label>顧客</label><input type="text" id="f_customer" value="' + esc(s.customer) + '"></div>' +
+      '<div class="field-row"><label>案件</label><input type="text" id="f_project" value="' + esc(s.project) + '"></div>' +
+      '<div class="field-row"><label>現場（任意）</label><input type="text" id="f_workLocation" value="' + esc(s.workLocation) + '"></div>' +
+      '<div class="field-row"><label>工期（任意）</label><div class="date-pair"><input type="date" id="f_periodStart" value="' + (s.periodStart || "") + '"><input type="date" id="f_periodEnd" value="' + (s.periodEnd || "") + '"></div></div>' +
+      '<div class="field-row"><label>内容・概要</label><textarea id="f_content">' + (s.content || "") + '</textarea></div>' +
+      '<div class="field-row"><label>関連タスク（任意）</label><input type="text" id="f_tasks" value="' + esc(s.tasks) + '" placeholder="例: 材料購入"></div>' +
+      '<button class="primary-btn" id="saveBtn">メモとして保存</button>' +
+      '<button class="secondary-btn" id="makeQuoteBtn">📄 この内容で見積書を作成</button>' +
+      '<button class="ghost-btn" data-go="capture">書き直す</button>' +
+      '<div class="mic-hint">「見積書を作成」を選ぶと、顧客・案件・現場・工期・内容を見積書の下書きに引き継ぎます（メモも履歴に保存されます）。</div>'
+    );
+  }
+
+  function renderHistory() {
+    var list = loadList(KEYS.captures).slice().reverse();
+    var body;
+    if (list.length === 0) {
+      body = '<div class="empty-state">まだ記録がありません。<br>「話す・入力」から最初の記録を作ってみましょう。</div>';
+    } else {
+      body = list.map(function (item) {
+        var c = item.confirmed;
+        var dateLine = [c.date, c.time].filter(Boolean).join(" ") || "日時未設定";
+        var who = [c.customer, c.project].filter(Boolean).join(" ／ ") || "(顧客・案件未設定)";
+        return (
+          '<div class="card" data-detail="' + item.id + '">' +
+          '  <div class="top-line"><span>' + dateLine + '</span></div>' +
+          '  <div class="customer-project">' + who + '</div>' +
+          '  <div class="content-preview">' + (c.content || "").slice(0, 60) + '</div>' +
+          '</div>'
+        );
+      }).join("");
+    }
+    return '<header><button class="back" data-go="home">← 戻る</button><h1>履歴</h1></header>' + body;
+  }
+
+  function renderDetail(id) {
+    var item = loadList(KEYS.captures).find(function (x) { return x.id === id; });
+    if (!item) return '<header><button class="back" data-go="history">← 戻る</button></header><p>記録が見つかりません。</p>';
+    var c = item.confirmed;
+    return (
+      '<header><button class="back" data-go="history">← 戻る</button><h1>記録の詳細</h1></header>' +
+      '<div class="card" style="cursor:default">' +
+      '  <div class="top-line"><span>' + [c.date, c.time].filter(Boolean).join(" ") + '</span></div>' +
+      '  <div class="customer-project">' + [c.customer, c.project].filter(Boolean).join(" ／ ") + '</div>' +
+      (c.workLocation ? '  <div class="content-preview">現場: ' + c.workLocation + '</div>' : "") +
+      (c.periodStart || c.periodEnd ? '  <div class="content-preview">工期: ' + (c.periodStart || "") + ' 〜 ' + (c.periodEnd || "") + '</div>' : "") +
+      '  <div class="content-preview">' + (c.content || "") + '</div>' +
+      (c.tasks ? '  <div class="content-preview">関連タスク: ' + c.tasks + '</div>' : "") +
+      '</div>' +
+      '<label>元の入力（参考）</label>' +
+      '<div class="raw-ref">' + item.rawText + '</div>' +
+      (!item.projectId ? '<button class="secondary-btn" id="assignProjectCaptureBtn">🔗 案件に割り当てる</button>' : '<div class="mic-hint">紐付け中の案件: ' + esc((projectSelectionInfo(item.projectId) || {}).projectName || "(削除済み)") + '</div>') +
+      '<button class="delete-link" data-delete-capture="' + item.id + '">この記録を削除する</button>'
+    );
+  }
+
+  // ---------------- レシート ----------------
+  function renderReceiptList() {
+    var list = loadList(KEYS.receipts).slice().reverse();
+    var body;
+    if (list.length === 0) {
+      body = '<div class="empty-state">まだレシートがありません。</div>';
+    } else {
+      body = list.map(function (r) {
+        return (
+          '<div class="card" data-receipt="' + r.id + '"><div class="thumb-row">' +
+          '  <img class="thumb" src="' + r.imageDataUrl + '">' +
+          '  <div><div class="customer-project">' + (r.store || "(店舗未入力)") + ' ' + yen(r.amount) + '</div>' +
+          '  <div class="content-preview">' + [r.date, r.project].filter(Boolean).join(" ／ ") + '</div></div>' +
+          '</div></div>'
+        );
+      }).join("");
+    }
+    return (
+      '<header><button class="back" data-go="home">← 戻る</button><h1>レシート</h1></header>' +
+      '<button class="add-fab" data-go="receiptCapture">＋ レシートを撮影・登録</button>' + body
+    );
+  }
+
+  function renderReceiptCapture() {
+    var img = state.pendingImage;
+    return (
+      '<header><button class="back" data-go="receiptList">← 戻る</button><h1>レシート登録</h1></header>' +
+      (img
+        ? '<div class="photo-frame"><img src="' + img + '"></div>' +
+          '<button class="secondary-btn" id="ocrBtn">📖 文字を読み取る（無料・目安）</button>' +
+          '<div class="mic-hint" id="ocrStatus">店舗名・金額を自動で読み取ってみます。無料の簡易OCRのため精度は完璧ではありません。読み取り後、必ず内容を確認・修正してください。</div>' +
+          '<button class="ghost-btn" id="retakeBtn">撮り直す</button>'
+        : '<label>レシートを撮影 or 選択</label><input type="file" accept="image/*" capture="environment" id="photoInput">' +
+          '<div class="mic-hint">カメラが使えない環境では、画像ファイルの選択になります。</div>') +
+      (img ?
+      '<label>店舗名</label><input type="text" id="r_store" value="' + esc(state.receiptDraft ? state.receiptDraft.store : "") + '" placeholder="例: ○○ホームセンター">' +
+      '<label>金額（円）</label><input type="number" id="r_amount" value="' + (state.receiptDraft ? state.receiptDraft.amount : "") + '" placeholder="12800">' +
+      '<label>日付</label><input type="date" id="r_date" value="' + (state.receiptDraft ? state.receiptDraft.date : todayStr()) + '">' +
+      '<label>案件（任意）</label><button class="secondary-btn" id="pickProjectBtn" style="margin-top:0">🔗 ' + (state.pendingReceiptProject ? [state.pendingReceiptProject.customerName, state.pendingReceiptProject.projectName].filter(Boolean).join(" ／ ") : "案件を選ぶ") + '</button>' +
+      '<label>区分</label><select id="r_category"><option>材料費</option><option>工具・消耗品</option><option>交通費</option><option>その他経費</option></select>' +
+      '<button class="primary-btn" id="saveReceiptBtn">保存する</button>' : "")
+    );
+  }
+
+  function renderReceiptDetail(id) {
+    var r = loadList(KEYS.receipts).find(function (x) { return x.id === id; });
+    if (!r) return '<header><button class="back" data-go="receiptList">← 戻る</button></header><p>見つかりません。</p>';
+    return (
+      '<header><button class="back" data-go="receiptList">← 戻る</button><h1>レシート詳細</h1></header>' +
+      '<div class="photo-frame"><img src="' + r.imageDataUrl + '"></div>' +
+      '<div class="card" style="cursor:default;margin-top:12px">' +
+      '  <div class="customer-project">' + (r.store || "(店舗未入力)") + ' ' + yen(r.amount) + '</div>' +
+      '  <div class="content-preview">日付: ' + (r.date || "-") + '<br>案件: ' + (r.project || "-") + '<br>区分: ' + (r.category || "-") + '</div>' +
+      '</div>' +
+      (!r.projectId ? '<button class="secondary-btn" id="assignProjectReceiptBtn">🔗 案件に割り当てる</button>' : '<div class="mic-hint">紐付け中の案件: ' + esc((projectSelectionInfo(r.projectId) || {}).projectName || "(削除済み)") + '</div>') +
+      '<button class="delete-link" data-delete-receipt="' + r.id + '">このレシートを削除する</button>'
+    );
+  }
+
+  // ---------------- 見積・請求・領収書 ----------------
+  var DOC_KIND_LABEL = { quote: "見積書", invoice: "請求書", receipt: "領収書" };
+
+  function renderDocList() {
+    var list = loadList(KEYS.quotes).concat(loadList(KEYS.invoices)).concat(loadList(KEYS.paymentReceipts));
+    list.sort(function (a, b) { return new Date(b.createdAt) - new Date(a.createdAt); });
+    var body;
+    if (list.length === 0) {
+      body = '<div class="empty-state">まだ見積書・請求書・領収書がありません。</div>';
+    } else {
+      body = list.map(function (d) {
+        var total = d.kind === "receipt" ? Number(d.amountReceived) || 0 : calcTotals(d.items).total;
+        return (
+          '<div class="card" data-doc="' + d.id + '">' +
+          '  <div class="top-line"><span class="status-pill">' + DOC_KIND_LABEL[d.kind] + ' ' + (d.docNumber || "") + '</span><span>' + (d.issueDate || "") + '</span></div>' +
+          '  <div class="customer-project">' + [d.customerName, d.project].filter(Boolean).join(" ／ ") + '</div>' +
+          '  <div class="content-preview">' + (d.kind === "receipt" ? "領収額" : "合計") + ' ' + yen(total) + '</div>' +
+          '</div>'
+        );
+      }).join("");
+    }
+    return (
+      '<header><button class="back" data-go="home">← 戻る</button><h1>見積・請求・領収書</h1></header>' +
+      '<div style="display:flex;gap:8px;margin-bottom:16px">' +
+      '<button class="secondary-btn" id="newQuoteBtn" style="margin-top:0">＋見積書</button>' +
+      '<button class="secondary-btn" id="newInvoiceBtn" style="margin-top:0">＋請求書</button>' +
+      '<button class="secondary-btn" id="newReceiptBtn" style="margin-top:0">＋領収書</button>' +
+      '</div>' + body
+    );
+  }
+
+  function renderItemCards(items) {
+    return items.map(function (it, i) {
+      var amt = (Number(it.qty) || 0) * (Number(it.unitPrice) || 0);
+      var preset = matchPreset(it.category);
+      var selectValue = !it.category ? "" : (preset ? it.category : "__custom__");
+      var presetOptions = loadItemPresets().map(function (p) {
+        return '<option value="' + esc(p.category) + '"' + (selectValue === p.category ? " selected" : "") + '>' + esc(p.category) + '</option>';
+      }).join("");
+      return (
+        '<div class="item-card" data-idx="' + i + '">' +
+        '<div class="row-head"><span>明細 #' + (i + 1) + '</span>' + (items.length > 1 ? '<button class="rm" data-rm-idx="' + i + '">✕ 削除</button>' : '') + '</div>' +
+        '<select class="it-category-select">' +
+        '<option value=""' + (selectValue === "" ? " selected" : "") + '>項目を選択してください</option>' +
+        presetOptions +
+        '<option value="__custom__"' + (selectValue === "__custom__" ? " selected" : "") + '>＋ その他（自由入力）</option>' +
+        '</select>' +
+        '<input type="text" class="it-category-custom" placeholder="項目名を入力" value="' + (selectValue === "__custom__" ? esc(it.category) : "") + '" style="' + (selectValue === "__custom__" ? "" : "display:none;") + '">' +
+        '<input type="text" class="it-spec" placeholder="仕様・摘要（例: クロス・フローリング張替）" value="' + esc(it.spec) + '">' +
+        '<div class="row3">' +
+        '<input type="number" class="it-qty" placeholder="数量" value="' + (it.qty != null ? it.qty : 1) + '">' +
+        '<input type="text" class="it-unit" placeholder="単位" value="' + esc(it.unit) + '">' +
+        '<input type="number" class="it-price" placeholder="単価" value="' + (it.unitPrice || 0) + '">' +
+        '</div>' +
+        '<div class="item-amount">金額: ' + yen(amt) + '</div>' +
+        '</div>'
+      );
+    }).join("");
+  }
+
+  function readItemsFromDOM() {
+    var items = [];
+    document.querySelectorAll("#itemsWrap .item-card").forEach(function (card) {
+      var sel = card.querySelector(".it-category-select");
+      var category = sel.value === "__custom__" ? card.querySelector(".it-category-custom").value.trim() : sel.value;
+      items.push({
+        category: category,
+        spec: card.querySelector(".it-spec").value,
+        qty: Number(card.querySelector(".it-qty").value) || 0,
+        unit: card.querySelector(".it-unit").value,
+        unitPrice: Number(card.querySelector(".it-price").value) || 0
+      });
+    });
+    return items;
+  }
+
+  function updateLiveTotals() {
+    document.querySelectorAll("#itemsWrap .item-card").forEach(function (card) {
+      var amt = (Number(card.querySelector(".it-qty").value) || 0) * (Number(card.querySelector(".it-price").value) || 0);
+      var amtEl = card.querySelector(".item-amount");
+      if (amtEl) amtEl.textContent = "金額: " + yen(amt);
+    });
+    var t = calcTotals(readItemsFromDOM());
+    var box = document.getElementById("liveTotals");
+    if (box) box.innerHTML =
+      '<div class="line"><span>小計</span><span>' + yen(t.subtotal) + '</span></div>' +
+      '<div class="line"><span>消費税(10%)</span><span>' + yen(t.tax) + '</span></div>' +
+      '<div class="line total"><span>合計</span><span>' + yen(t.total) + '</span></div>';
+  }
+
+  function renderDocForm() {
+    if (!state.docForm) state.docForm = defaultDocForm("quote");
+    if (state.docForm.kind === "receipt") return renderReceiptForm();
+    var f = state.docForm;
+    var isInvoice = f.kind === "invoice";
+    var t = calcTotals(f.items);
+    return (
+      '<header><button class="back" data-go="docList">← 戻る</button><h1>' + (isInvoice ? "請求書を作成" : "見積書を作成") + '</h1></header>' +
+      '<button class="secondary-btn" id="pickProjectBtn" style="margin-top:0">🔗 ' + (f.projectId ? [f.customerName, f.project].filter(Boolean).join(" ／ ") : "案件を選ぶ（任意）") + '</button>' +
+      '<label>顧客名</label><input type="text" id="f_customerName" value="' + esc(f.customerName) + '" placeholder="例: ○○ ○○">' +
+      '<label>件名</label><input type="text" id="f_project" value="' + esc(f.project) + '" placeholder="例: ○○邸 リフォーム工事一式">' +
+      '<label>工事場所（任意）</label><input type="text" id="f_workLocation" value="' + esc(f.workLocation) + '">' +
+      '<label>工期（任意）</label><div class="date-pair"><input type="date" id="f_periodStart" value="' + f.periodStart + '"><input type="date" id="f_periodEnd" value="' + f.periodEnd + '"></div>' +
+      '<label>' + (isInvoice ? "請求番号" : "見積番号") + '</label><input type="text" id="f_docNumber" value="' + esc(f.docNumber) + '">' +
+      '<label>発行日</label><input type="date" id="f_issueDate" value="' + f.issueDate + '">' +
+      '<label>' + (isInvoice ? "支払期限" : "有効期限") + '</label><input type="date" id="f_dueDate" value="' + f.dueDate + '">' +
+      '<label>' + (isInvoice ? "支払期限の補足（任意）" : "有効期限の補足（任意）") + '</label><input type="text" id="f_dueDateNote" value="' + esc(f.dueDateNote) + '" placeholder="例: ' + (isInvoice ? "月末締め翌月末払い" : "発行日より30日間") + '">' +
+      '<label>明細</label>' +
+      '<div id="itemsWrap">' + renderItemCards(f.items) + '</div>' +
+      '<button class="secondary-btn" id="addItemBtn">＋ 明細を追加</button>' +
+      '<div class="totals-box" id="liveTotals">' +
+      '<div class="line"><span>小計</span><span>' + yen(t.subtotal) + '</span></div>' +
+      '<div class="line"><span>消費税(10%)</span><span>' + yen(t.tax) + '</span></div>' +
+      '<div class="line total"><span>合計</span><span>' + yen(t.total) + '</span></div>' +
+      '</div>' +
+      (isInvoice ? "" : '<label>お支払条件（任意）</label><textarea id="f_paymentTerms">' + (f.paymentTerms || "") + '</textarea>') +
+      '<label>備考（任意）</label><textarea id="f_remarks">' + (f.remarks || "") + '</textarea>' +
+      '<button class="primary-btn" id="saveDocBtn">' + (isInvoice ? "請求書を保存" : "見積書を保存") + '</button>' +
+      '<div class="mic-hint">いただいた見積書・請求書フォーマットに合わせています。保存後の「印刷/PDF保存」でこのフォーマット通りに出力できます。「Excelダウンロード」は数値のみで、色などの装飾は無料ライブラリの制約により反映されません。</div>'
+    );
+  }
+
+  function renderReceiptForm() {
+    var f = state.docForm;
+    return (
+      '<header><button class="back" data-go="docList">← 戻る</button><h1>領収書を作成</h1></header>' +
+      '<button class="secondary-btn" id="pickProjectBtn" style="margin-top:0">🔗 ' + (f.projectId ? [f.customerName, f.project].filter(Boolean).join(" ／ ") : "案件を選ぶ（任意）") + '</button>' +
+      '<label>宛名</label><input type="text" id="f_customerName" value="' + esc(f.customerName) + '" placeholder="例: ○○ ○○">' +
+      '<label>案件（任意・内部管理用）</label><input type="text" id="f_project" value="' + esc(f.project) + '" placeholder="例: ○○邸 リフォーム工事一式">' +
+      '<label>領収書番号</label><input type="text" id="f_docNumber" value="' + esc(f.docNumber) + '">' +
+      '<label>発行日</label><input type="date" id="f_issueDate" value="' + f.issueDate + '">' +
+      '<label>金額（税込・円）</label><input type="number" id="f_amountReceived" value="' + (f.amountReceived || 0) + '">' +
+      '<label>但し書き</label><input type="text" id="f_description" value="' + esc(f.description) + '" placeholder="例: 工事費として">' +
+      '<button class="primary-btn" id="saveDocBtn">領収書を保存</button>' +
+      '<div class="mic-hint">いただいた領収書フォーマットに合わせています。税抜金額・消費税は入力した金額（税込）から自動で逆算されます。5万円以上の領収書には本来収入印紙の貼付が必要です。印紙欄・押印欄は印刷プレビューに表示されますが、実際の印紙・押印はご自身でご対応ください。</div>'
+    );
+  }
+
+  function renderInvoicePaymentSection(invoiceId, total) {
+    var info = getInvoicePaymentInfo(invoiceId, total);
+    var historyHtml = info.payments.map(function (p) {
+      return '<div class="content-preview">' + (p.date || "") + '　' + yen(p.amount) + (p.note ? '　' + esc(p.note) : "") +
+        '　<button class="delete-link" data-delete-payment="' + p.id + '" style="display:inline;margin:0;width:auto">取消</button></div>';
+    }).join("");
+    return (
+      '<div class="card" style="cursor:default">' +
+      '<div class="top-line"><span class="status-pill" style="' + (info.status === "入金済み" ? "background:var(--ok);color:#fff" : "") + '">' + info.status + '</span><span>入金済み ' + yen(info.paidAmount) + ' ／ 残り ' + yen(info.remaining) + '</span></div>' +
+      (historyHtml || '<div class="content-preview">入金記録はまだありません</div>') +
+      (info.remaining > 0 ?
+        '<label style="margin:10px 0 4px">入金を記録する</label>' +
+        '<input type="number" id="payAmount" placeholder="入金額" value="' + info.remaining + '">' +
+        '<input type="date" id="payDate" value="' + todayStr() + '" style="margin-top:8px">' +
+        '<button class="secondary-btn" id="recordPaymentBtn" data-invoice-id="' + invoiceId + '">記録する</button>'
+        : "") +
+      '</div>'
+    );
+  }
+
+  function renderDocDetail(id) {
+    var found = findDoc(id);
+    if (!found) return '<header><button class="back" data-go="docList">← 戻る</button></header><p>見つかりません。</p>';
+    if (found.kind === "receipt") return renderReceiptDetail2(found.doc);
+    var d = found.doc, kind = found.kind, isInvoice = kind === "invoice";
+    var label = isInvoice ? "請求書" : "見積書";
+    var printTitle = isInvoice ? "請求書" : "御見積書";
+    var company = loadCompany();
+    var t = calcTotals(d.items);
+    var rows = d.items.map(function (it) {
+      var amt = (Number(it.qty) || 0) * (Number(it.unitPrice) || 0);
+      return '<tr><td>' + (it.category || "") + '</td><td>' + (it.spec || "") + '</td><td>' + (it.qty || 0) + '</td><td>' + (it.unit || "") + '</td><td>' + yen(it.unitPrice) + '</td><td>' + yen(amt) + '</td></tr>';
+    }).join("");
+
+    return (
+      '<div class="no-print"><header><button class="back" data-go="docList">← 戻る</button><h1>' + label + '詳細</h1></header></div>' +
+      '<div class="doc-sheet">' +
+      '  <div class="doc-top">' +
+      '    <h2 class="doc-title">' + printTitle + '</h2>' +
+      '    <div class="doc-meta"><div>' + (isInvoice ? "請求番号" : "見積番号") + ' <b>' + (d.docNumber || "") + '</b></div><div>発行日 <b>' + (d.issueDate || "") + '</b></div></div>' +
+      '  </div>' +
+      '  <div class="doc-parties">' +
+      '    <div><div class="customer-name">' + (d.customerName || "") + ' 様</div><div style="font-size:11px;color:#555">下記の通り' + (isInvoice ? "ご請求" : "お見積り") + '申し上げます。</div></div>' +
+      '    <div class="doc-company"><div class="company-name">' + (company.name || "(自社情報未設定)") + '</div>' +
+      (company.zip || company.address ? '<div>' + (company.zip ? "〒" + company.zip + " " : "") + (company.address || "") + '</div>' : "") +
+      (company.tel || company.fax ? '<div>TEL: ' + (company.tel || "-") + '　FAX: ' + (company.fax || "-") + '</div>' : "") +
+      (company.invoiceRegNo ? '<div>登録番号：' + company.invoiceRegNo + '</div>' : "") +
+      '    </div>' +
+      '  </div>' +
+      '  <div class="doc-info-amount">' +
+      '    <table class="doc-info">' +
+      '      <tr><th>件名</th><td>' + (d.project || "") + '</td></tr>' +
+      (d.workLocation ? '<tr><th>工事場所</th><td>' + d.workLocation + '</td></tr>' : "") +
+      (d.periodStart || d.periodEnd ? '<tr><th>工期</th><td>' + (d.periodStart || "") + ' 〜 ' + (d.periodEnd || "") + '</td></tr>' : "") +
+      (d.dueDate ? '<tr><th>' + (isInvoice ? "支払期限" : "有効期限") + '</th><td>' + d.dueDate + (d.dueDateNote ? "（" + d.dueDateNote + "）" : "") + '</td></tr>' : "") +
+      '    </table>' +
+      '    <div class="doc-amount-box"><div class="amount-label">' + (isInvoice ? "ご請求金額（税込）" : "お見積金額（税込）") + '</div><div class="amount-value">' + yen(t.total) + '</div></div>' +
+      '  </div>' +
+      '  <table class="doc-items2"><thead><tr><th>項目</th><th>仕様・摘要</th><th>数量</th><th>単位</th><th>単価</th><th>金額</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+      '  <table class="doc-totals2"><tr><td>小計</td><td>' + yen(t.subtotal) + '</td></tr><tr><td>消費税（10%）</td><td>' + yen(t.tax) + '</td></tr><tr class="total"><td>合計</td><td>' + yen(t.total) + '</td></tr></table>' +
+      '  <div class="doc-footer2">' +
+      (isInvoice ?
+        '    <div><div class="footer-label2">お振込先</div><div>' + [company.bankName, company.bankBranch].filter(Boolean).join(" ") + '<br>' + [company.accountType, company.accountNumber].filter(Boolean).join(" ") + '<br>口座名義　' + (company.accountHolder || "") + '</div></div>'
+        : '    <div><div class="footer-label2">お支払条件</div><div>' + nl2br(d.paymentTerms || "-") + '</div></div>') +
+      '    <div><div class="footer-label2">備考</div><div>' + nl2br(d.remarks || "-") + '</div></div>' +
+      '  </div>' +
+      '</div>' +
+      '<div class="no-print">' +
+      (!company.name ? '<div class="mic-hint">※自社情報が未設定です。ホーム画面の「⚙️ 自社情報を設定」から入力すると、この書類にも自動反映されます。</div>' : "") +
+      (!d.projectId ? '<button class="secondary-btn" id="assignProjectBtn">🔗 案件に割り当てる</button>' : '<div class="mic-hint">紐付け中の案件: ' + esc((projectSelectionInfo(d.projectId) || {}).projectName || "(削除済み)") + '</div>') +
+      (isInvoice ? renderInvoicePaymentSection(d.id, t.total) : "") +
+      '<button class="primary-btn" id="printBtn">🖨️ 印刷 / PDF保存</button>' +
+      '<button class="secondary-btn" id="exportXlsxBtn">📊 Excelでダウンロード</button>' +
+      (kind === "quote" ? '<button class="secondary-btn" data-make-invoice="' + d.id + '">この内容で請求書を作成</button>' : "") +
+      (kind === "invoice" ? '<button class="secondary-btn" data-make-receipt="' + d.id + '">この内容で領収書を発行</button>' : "") +
+      '<button class="delete-link" data-delete-doc="' + d.id + '">この' + label + 'を削除する</button>' +
+      '</div>'
+    );
+  }
+
+  function renderReceiptDetail2(d) {
+    var company = loadCompany();
+    var t = receiptTaxBreakdown(d.amountReceived);
+    return (
+      '<div class="no-print"><header><button class="back" data-go="docList">← 戻る</button><h1>領収書詳細</h1></header></div>' +
+      '<div class="doc-sheet">' +
+      '  <div class="doc-top">' +
+      '    <h2 class="doc-title">領収書</h2>' +
+      '    <div class="doc-meta"><div>領収書番号 <b>' + (d.docNumber || "") + '</b></div><div>発行日 <b>' + (d.issueDate || "") + '</b></div></div>' +
+      '  </div>' +
+      '  <div class="doc-parties" style="border-bottom:none;padding-bottom:0;">' +
+      '    <div><div class="customer-name">' + (d.customerName || "") + ' 様</div></div>' +
+      '  </div>' +
+      '  <div style="display:flex;gap:10px;align-items:stretch;margin:12px 0;">' +
+      '    <div class="doc-amount-box" style="flex:1;border-color:#2f5d50;background:#f2ead9;">' +
+      '      <div class="amount-label">金額</div><div class="amount-value" style="font-size:24px;">' + yen(t.total) + ' －</div>' +
+      '    </div>' +
+      '    <div style="flex:0 0 90px;border:1px solid #999;border-radius:4px;display:flex;align-items:center;justify-content:center;text-align:center;font-size:11px;color:#666;">収入印紙<br>貼付欄</div>' +
+      '  </div>' +
+      '  <table class="doc-info" style="width:100%;margin-bottom:12px;">' +
+      '    <tr><th>税抜金額</th><td>' + yen(t.excluded) + '</td></tr>' +
+      '    <tr><th>消費税（10%）</th><td>' + yen(t.tax) + '</td></tr>' +
+      '  </table>' +
+      '  <table class="doc-info" style="width:100%;margin-bottom:12px;"><tr><th>但し書き</th><td>' + (d.description || "") + '</td></tr></table>' +
+      '  <div style="font-size:12px;margin-bottom:16px;">上記金額を正に領収いたしました。</div>' +
+      '  <div class="doc-company" style="text-align:right;">' +
+      '    <div class="company-name">' + (company.name || "(自社情報未設定)") + '</div>' +
+      (company.zip || company.address ? '<div>' + (company.zip ? "〒" + company.zip + " " : "") + (company.address || "") + '</div>' : "") +
+      (company.tel || company.fax ? '<div>TEL: ' + (company.tel || "-") + '　FAX: ' + (company.fax || "-") + '</div>' : "") +
+      (company.invoiceRegNo ? '<div>登録番号：' + company.invoiceRegNo + '</div>' : "") +
+      '  </div>' +
+      '  <div style="font-size:10.5px;color:#666;margin-top:16px;border-top:1px solid #ccc;padding-top:8px;">' +
+      '※ 5万円以上の領収書には収入印紙の貼付が必要です（記載金額により印紙税額が異なります）。' +
+      '  </div>' +
+      '</div>' +
+      '<div class="no-print">' +
+      (!company.name ? '<div class="mic-hint">※自社情報が未設定です。ホーム画面の「⚙️ 自社情報を設定」から入力すると、この書類にも自動反映されます。</div>' : "") +
+      (!d.projectId ? '<button class="secondary-btn" id="assignProjectBtn">🔗 案件に割り当てる</button>' : '<div class="mic-hint">紐付け中の案件: ' + esc((projectSelectionInfo(d.projectId) || {}).projectName || "(削除済み)") + '</div>') +
+      '<button class="primary-btn" id="printBtn">🖨️ 印刷 / PDF保存</button>' +
+      '<button class="secondary-btn" id="exportXlsxBtn">📊 Excelでダウンロード</button>' +
+      '<button class="delete-link" data-delete-doc="' + d.id + '">この領収書を削除する</button>' +
+      '</div>'
+    );
+  }
+
+  // ---------------- 顧客・案件 ----------------
+  function renderProjectPicker() {
+    var query = (state.pickerQuery || "").trim();
+    var projects = loadProjects().slice().reverse();
+    if (query) {
+      projects = projects.filter(function (p) {
+        var customer = p.customerId ? findCustomer(p.customerId) : null;
+        var hay = [(customer ? customer.name : ""), p.name].join(" ");
+        return hay.indexOf(query) !== -1;
+      });
+    }
+    var listHtml = projects.length === 0
+      ? '<div class="empty-state">' + (query ? "見つかりませんでした。" : "まだ案件がありません。下から新規登録してください。") + '</div>'
+      : projects.map(function (p) {
+          var customer = p.customerId ? findCustomer(p.customerId) : null;
+          return '<div class="card" data-pick-project="' + p.id + '">' +
+            '<div class="top-line"><span class="status-pill">' + p.stage + '</span></div>' +
+            '<div class="customer-project">' + [customer ? customer.name : "", p.name].filter(Boolean).join(" ／ ") + '</div>' +
+            (p.workLocation ? '<div class="content-preview">' + p.workLocation + '</div>' : "") +
+            '</div>';
+        }).join("");
+    var customerNames = loadCustomers().map(function (c) { return '<option value="' + esc(c.name) + '">'; }).join("");
+    return (
+      '<header><button class="back" id="pickerCancelBtn">← 戻る</button><h1>案件を選ぶ</h1></header>' +
+      '<input type="text" id="pickerSearch" placeholder="顧客名・案件名で検索" value="' + esc(query) + '">' +
+      (state.pickerShowNew ? renderPickerNewForm() : '<button class="add-fab" id="pickerShowNewBtn" style="margin-top:14px">＋ 新しい顧客・案件を登録</button>') +
+      listHtml +
+      '<datalist id="customerNameList">' + customerNames + '</datalist>'
+    );
+  }
+
+  function renderPickerNewForm() {
+    return (
+      '<div class="card" style="cursor:default;margin-top:14px">' +
+      '<label>顧客名</label><input type="text" id="pk_customerName" list="customerNameList" placeholder="例: 田中工務店（既存名なら再利用します）">' +
+      '<label>住所（任意）</label><input type="text" id="pk_customerAddress">' +
+      '<label>電話番号（任意）</label><input type="text" id="pk_customerTel">' +
+      '<label>案件名</label><input type="text" id="pk_projectName" placeholder="例: ○○邸 リフォーム">' +
+      '<label>工事場所（任意）</label><input type="text" id="pk_workLocation">' +
+      '<label>工期（任意）</label><div class="date-pair"><input type="date" id="pk_periodStart"><input type="date" id="pk_periodEnd"></div>' +
+      '<button class="primary-btn" id="pickerCreateBtn">登録して選択</button>' +
+      '<button class="ghost-btn" id="pickerCancelNewBtn">キャンセル</button>' +
+      '</div>'
+    );
+  }
+
+  function renderProjectList() {
+    var projects = loadProjects().slice().reverse();
+    var body = projects.length === 0
+      ? '<div class="empty-state">まだ顧客・案件がありません。<br>下のボタンから登録してみましょう。</div>'
+      : projects.map(function (p) {
+          var customer = p.customerId ? findCustomer(p.customerId) : null;
+          return '<div class="card" data-project="' + p.id + '">' +
+            '<div class="top-line"><span class="status-pill">' + p.stage + '</span></div>' +
+            '<div class="customer-project">' + [customer ? customer.name : "", p.name].filter(Boolean).join(" ／ ") + '</div>' +
+            (p.workLocation ? '<div class="content-preview">' + p.workLocation + '</div>' : "") +
+            '</div>';
+        }).join("");
+    return (
+      '<header><button class="back" data-go="home">← 戻る</button><h1>顧客・案件</h1></header>' +
+      '<button class="add-fab" id="newProjectBtn">＋ 新しい顧客・案件を登録</button>' +
+      body
+    );
+  }
+
+  function renderProjectDetail(projectId) {
+    var project = findProject(projectId);
+    if (!project) return '<header><button class="back" data-go="projectList">← 戻る</button></header><p>案件が見つかりません。</p>';
+    var customer = project.customerId ? findCustomer(project.customerId) : null;
+
+    var quotes = loadList(KEYS.quotes).filter(function (d) { return d.projectId === projectId; });
+    var invoices = loadList(KEYS.invoices).filter(function (d) { return d.projectId === projectId; });
+    var receipts2 = loadList(KEYS.paymentReceipts).filter(function (d) { return d.projectId === projectId; });
+    var expenses = loadList(KEYS.receipts).filter(function (d) { return d.projectId === projectId; });
+    var memos = loadList(KEYS.captures).filter(function (d) { return d.projectId === projectId; });
+    var changeOrders = loadChangeOrders().filter(function (c) { return c.projectId === projectId; });
+    var photos = loadPhotos().filter(function (p) { return p.projectId === projectId; });
+    var schedule = loadScheduleEvents().filter(function (s) { return s.projectId === projectId; }).sort(function (a, b) { return (a.date || "").localeCompare(b.date || ""); });
+
+    function docLine(d, kind) {
+      var total = kind === "receipt" ? Number(d.amountReceived) || 0 : calcTotals(d.items).total;
+      var payBadge = "";
+      if (kind === "invoice") {
+        var info = getInvoicePaymentInfo(d.id, total);
+        payBadge = '<span class="status-pill" style="margin-left:6px;' + (info.status === "入金済み" ? "background:var(--ok);color:#fff" : "") + '">' + info.status + '</span>';
+      }
+      return '<div class="card" data-doc="' + d.id + '"><div class="top-line"><span>' + (d.docNumber || "") + payBadge + '</span><span>' + (d.issueDate || "") + '</span></div><div class="content-preview">' + yen(total) + '</div></div>';
+    }
+    function section(title, itemsHtml, emptyText) {
+      return '<label style="margin-top:20px">' + title + '</label>' + (itemsHtml || '<div class="content-preview">' + emptyText + '</div>');
+    }
+
+    var coHtml = changeOrders.map(function (c) {
+      return '<div class="card" style="cursor:default"><div class="top-line"><span class="status-pill" style="' + (c.billed ? "background:var(--ok);color:#fff" : "") + '">' + (c.billed ? "請求済み" : "未請求") + '</span></div>' +
+        '<div class="customer-project">' + c.description + '</div><div class="content-preview">' + yen(c.amount) + '</div></div>';
+    }).join("");
+
+    return (
+      '<header><button class="back" data-go="projectList">← 戻る</button><h1>案件詳細</h1></header>' +
+      '<div class="card" style="cursor:default">' +
+      '<div class="customer-project">' + [customer ? customer.name : "(顧客未設定)", project.name].filter(Boolean).join(" ／ ") + '</div>' +
+      (project.workLocation ? '<div class="content-preview">現場: ' + project.workLocation + '</div>' : "") +
+      (project.periodStart || project.periodEnd ? '<div class="content-preview">工期: ' + (project.periodStart || "") + ' 〜 ' + (project.periodEnd || "") + '</div>' : "") +
+      (customer && customer.tel ? '<div class="content-preview">TEL: ' + customer.tel + '</div>' : "") +
+      '</div>' +
+      '<label>進捗</label>' +
+      '<select id="stageSelect">' + PROJECT_STAGES.map(function (s) { return '<option' + (s === project.stage ? " selected" : "") + '>' + s + '</option>'; }).join("") + '</select>' +
+      '<div style="display:flex;gap:8px;margin-top:14px">' +
+      '<button class="secondary-btn" id="quickQuoteBtn" style="margin-top:0">＋見積書</button>' +
+      '<button class="secondary-btn" id="quickInvoiceBtn" style="margin-top:0">＋請求書</button>' +
+      '</div>' +
+      section("見積書", quotes.map(function (d) { return docLine(d, "quote"); }).join(""), "まだありません") +
+      section("請求書", invoices.map(function (d) { return docLine(d, "invoice"); }).join(""), "まだありません") +
+      section("領収書", receipts2.map(function (d) { return docLine(d, "receipt"); }).join(""), "まだありません") +
+      section("経費・レシート", expenses.map(function (r) {
+        return '<div class="card" data-receipt="' + r.id + '"><div class="customer-project">' + (r.store || "(店舗未入力)") + ' ' + yen(r.amount) + '</div><div class="content-preview">' + (r.date || "") + '</div></div>';
+      }).join(""), "まだありません") +
+      section("メモ", memos.map(function (m) {
+        return '<div class="card" data-detail="' + m.id + '"><div class="content-preview">' + (m.confirmed.content || "").slice(0, 40) + '</div></div>';
+      }).join(""), "まだありません") +
+      section("追加工事", coHtml, "まだありません") +
+      '<div class="card" style="cursor:default">' +
+      '<label style="margin:0 0 6px">＋追加工事を記録</label>' +
+      '<input type="text" id="co_description" placeholder="例: 建具交換">' +
+      '<input type="number" id="co_amount" placeholder="金額（円）" style="margin-top:8px">' +
+      '<button class="secondary-btn" id="addChangeOrderBtn">記録する</button>' +
+      '</div>' +
+      section("予定", schedule.map(function (s) {
+        return '<div class="card" style="cursor:default"><div class="customer-project">' + esc(s.title) + '</div><div class="content-preview">' + (s.date || "") + (s.startTime ? " " + s.startTime : "") + (s.attendees ? "　" + esc(s.attendees) : "") + '　<button class="delete-link" data-delete-schedule="' + s.id + '" style="display:inline;margin:0;width:auto">削除</button></div></div>';
+      }).join(""), "まだありません") +
+      '<button class="secondary-btn" id="addScheduleBtn">＋予定を追加</button>' +
+      section("写真", photos.map(function (p) {
+        return '<div class="card" data-photo="' + p.id + '" style="display:flex;align-items:center;gap:10px">' +
+          '<img src="' + p.imageDataUrl + '" style="width:52px;height:52px;object-fit:cover;border-radius:8px;flex:0 0 auto">' +
+          '<div><b>' + p.phase + '</b>' + (p.caption ? '<div class="content-preview">' + esc(p.caption) + '</div>' : "") + '</div></div>';
+      }).join(""), "まだありません") +
+      '<button class="secondary-btn" id="addPhotoBtn">＋写真を追加</button>'
+    );
+  }
+
+  function renderChangeOrderReview() {
+    var list = state.pendingChangeOrders || [];
+    var rows = list.map(function (c, i) {
+      return '<label style="display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:8px">' +
+        '<input type="checkbox" class="co-check" data-co-idx="' + i + '"' + (c.checked ? " checked" : "") + ' style="width:18px;height:18px">' +
+        '<span style="flex:1">' + c.description + '</span><b>' + yen(c.amount) + '</b></label>';
+    }).join("");
+    return (
+      '<header><button class="back" id="coReviewCancelBtn">← 戻る</button><h1>追加工事の確認</h1></header>' +
+      '<p class="subtitle">未請求の追加工事があります。今回の請求に含めるものを選んでください</p>' +
+      rows +
+      '<button class="primary-btn" id="coReviewNextBtn">次へ（請求書の下書きへ）</button>'
+    );
+  }
+
+  // ---------------- 現場写真 ----------------
+  function renderPhotoCapture() {
+    var img = state.pendingPhoto;
+    return (
+      '<header><button class="back" id="photoCaptureBack">← 戻る</button><h1>写真を追加</h1></header>' +
+      (img
+        ? '<div class="photo-frame"><img src="' + img + '"></div>' +
+          '<button class="ghost-btn" id="retakePhotoBtn">撮り直す</button>' +
+          '<label>タイミング</label><select id="photo_phase">' + PHOTO_PHASES.map(function (p) { return '<option>' + p + '</option>'; }).join("") + '</select>' +
+          '<label>メモ（任意）</label><input type="text" id="photo_caption" placeholder="例: 解体後の状態">' +
+          '<button class="primary-btn" id="savePhotoBtn">保存する</button>'
+        : '<label>写真を撮影 or 選択</label><input type="file" accept="image/*" capture="environment" id="photoFileInput">' +
+          '<div class="mic-hint">カメラが使えない環境では、画像ファイルの選択になります。</div>')
+    );
+  }
+
+  function renderPhotoDetail(id) {
+    var p = loadPhotos().find(function (x) { return x.id === id; });
+    if (!p) return '<header><button class="back" data-go="projectList">← 戻る</button></header><p>見つかりません。</p>';
+    return (
+      '<header><button class="back" id="photoDetailBack">← 戻る</button><h1>写真</h1></header>' +
+      '<div class="photo-frame"><img src="' + p.imageDataUrl + '"></div>' +
+      '<div class="card" style="cursor:default"><b>' + p.phase + '</b>' + (p.caption ? '<div class="content-preview">' + esc(p.caption) + '</div>' : "") + '</div>' +
+      '<button class="delete-link" data-delete-photo="' + p.id + '">この写真を削除する</button>'
+    );
+  }
+
+  // ---------------- スケジュール（予定） ----------------
+  function renderScheduleForm() {
+    var projectId = state.scheduleProjectId;
+    var sel = projectSelectionInfo(projectId);
+    return (
+      '<header><button class="back" id="scheduleFormBack">← 戻る</button><h1>予定を追加</h1></header>' +
+      (sel ? '<p class="subtitle">' + [sel.customerName, sel.projectName].filter(Boolean).join(" ／ ") + '</p>' : "") +
+      '<label>内容</label><input type="text" id="sch_title" placeholder="例: 現地確認">' +
+      '<label>日付</label><input type="date" id="sch_date" value="' + todayStr() + '">' +
+      '<label>時間（任意）</label><input type="text" id="sch_time" placeholder="例: 9:00">' +
+      '<label>同行者（任意）</label><input type="text" id="sch_attendees" placeholder="例: 田中さん">' +
+      '<button class="primary-btn" id="saveScheduleBtn">保存する</button>'
+    );
+  }
+
+  // ---------------- チャット（業務アシスタント） ----------------
+  function renderChatProjectCards(projects) {
+    return projects.map(function (p) {
+      var customer = p.customerId ? findCustomer(p.customerId) : null;
+      return '<div class="card" data-project="' + p.id + '" style="margin-top:8px"><div class="customer-project">' +
+        [customer ? customer.name : "", p.name].filter(Boolean).join(" ／ ") + '</div></div>';
+    }).join("");
+  }
+  function renderChatInvoiceCards(invoices) {
+    return invoices.map(function (inv) {
+      var total = calcTotals(inv.items).total;
+      var info = getInvoicePaymentInfo(inv.id, total);
+      return '<div class="card" data-doc="' + inv.id + '" style="margin-top:8px"><div class="customer-project">' + [inv.customerName, inv.project].filter(Boolean).join(" ／ ") + '</div>' +
+        '<div class="content-preview">' + (inv.docNumber || "") + '　残り ' + yen(info.remaining) + '</div></div>';
+    }).join("");
+  }
+  function renderChatStatusCard(st) {
+    var lines = [];
+    if (st.nextSchedule) lines.push('<div class="content-preview">📅 ' + st.nextSchedule.date + (st.nextSchedule.startTime ? " " + st.nextSchedule.startTime : "") + " " + esc(st.nextSchedule.title) + '</div>');
+    lines.push('<div class="content-preview">📄 見積: ' + (st.hasQuote ? yen(st.quoteTotal) : "未作成") + '</div>');
+    if (st.unbilledChangeOrders.length) {
+      lines.push('<div class="content-preview">➕ 追加工事(未請求): ' + st.unbilledChangeOrders.map(function (c) { return esc(c.description) + " " + yen(c.amount); }).join("、") + '</div>');
+    }
+    if (st.hasInvoice) {
+      st.invoiceSummaries.forEach(function (i) { lines.push('<div class="content-preview">🧾 請求 ' + (i.docNumber || "") + ": " + yen(i.total) + "（" + i.status + "）</div>"); });
+    } else {
+      lines.push('<div class="content-preview">🧾 請求: 未作成</div>');
+    }
+    lines.push('<div class="content-preview">💰 入金合計: ' + yen(st.totalPaid) + '</div>');
+    return '<div class="card" data-project="' + st.projectId + '" style="margin-top:8px">' +
+      '<div class="customer-project">🏠 ' + esc(st.title) + '</div>' + lines.join("") +
+      '<div style="color:var(--accent);font-size:12.5px;margin-top:6px;font-weight:700">この案件を開く →</div></div>';
+  }
+  function renderChatInvoiceDraftCard(draft) {
+    var rows = draft.items.map(function (it) {
+      return '<div class="content-preview">' + esc(it.spec || it.category || "") + "　" + yen((Number(it.qty) || 0) * (Number(it.unitPrice) || 0)) + '</div>';
+    }).join("");
+    return '<div class="card" style="cursor:default;margin-top:8px">' + rows +
+      '<div class="customer-project" style="margin-top:6px">合計 ' + yen(draft.total) + '</div>' +
+      '<button class="secondary-btn" id="chatConfirmInvoiceBtn" style="margin-top:8px">請求書を確認</button></div>';
+  }
+
+  function renderChatMemoCards(memos) {
+    return memos.map(function (m) {
+      var c = m.confirmed || {};
+      var who = [c.customer, c.project].filter(Boolean).join(" ／ ");
+      return '<div class="card" data-detail="' + m.id + '" style="margin-top:8px">' +
+        '<div class="top-line"><span>📝 メモ' + (c.time ? "　" + c.time : "") + '</span></div>' +
+        (who ? '<div class="customer-project">' + esc(who) + '</div>' : "") +
+        '<div class="content-preview">' + esc((c.content || "").slice(0, 60)) + '</div></div>';
+    }).join("");
+  }
+
+  function renderChatFreeTextSummary(s) {
+    var lines = [];
+    if (s.quotes.length) lines.push('<div class="content-preview">📄 見積 ' + s.quotes.length + '件（合計 ' + yen(s.quoteTotal) + '）</div>');
+    if (s.invoices.length) lines.push('<div class="content-preview">🧾 請求 ' + s.invoices.length + '件（合計 ' + yen(s.invoiceTotal) + '）</div>');
+    if (s.memos.length) lines.push('<div class="content-preview">📝 関連メモ ' + s.memos.length + '件</div>');
+    var html = '<div class="card" style="cursor:default;margin-top:8px"><div class="customer-project">🏠 ' + esc(s.name) + '</div>' +
+      (lines.join("") || '<div class="content-preview">関連する記録が見つかりませんでした。</div>') + '</div>';
+    if (s.memos.length) html += renderChatMemoCards(s.memos);
+    return html;
+  }
+
+  function buildGeneralFallbackResponse(question, searchResults) {
+    // ルールベースに限界があるので、回答できない時は「何が分かっているか」を明示する。
+    var known = [];
+    var missing = [];
+    var projectNames = (searchResults.projects || []).map(function (p) { return p && p.name ? p.name : ""; }).filter(Boolean);
+
+    if (projectNames.length) {
+      known.push("案件名: " + projectNames.join(" / ") + " は確認できています");
+    }
+    if ((searchResults.categories && searchResults.categories.quotes && searchResults.categories.quotes.length)) {
+      known.push("見積情報は登録されています");
+    }
+    if ((searchResults.categories && searchResults.categories.invoices && searchResults.categories.invoices.length)) {
+      known.push("請求・入金情報は登録されています");
+    }
+    if ((searchResults.categories && searchResults.categories.photos && searchResults.categories.photos.length)) {
+      known.push("写真は登録されています");
+    }
+    if ((searchResults.categories && searchResults.categories.scheduleEvents && searchResults.categories.scheduleEvents.length)) {
+      known.push("予定情報は登録されています");
+    }
+
+    if (!projectNames.length) missing.push("対象の顧客・案件名");
+    if (!(searchResults.categories && searchResults.categories.quotes && searchResults.categories.quotes.length)) missing.push("見積");
+    if (!(searchResults.categories && searchResults.categories.invoices && searchResults.categories.invoices.length)) missing.push("請求/入金");
+    if (!(searchResults.categories && searchResults.categories.photos && searchResults.categories.photos.length)) missing.push("写真");
+
+    var note = known.length ? "登録されている情報としては、" + known.join(" / ") + " が確認できます。" : "該当する顧客・案件名はまだ登録されていません。";
+    var detail = missing.length ? "一方で、" + missing.join(" / ") + " に関する登録はまだありません。" : "それ以外の情報も確認できる範囲で反映しています。";
+
+    return { text: note + "\n" + detail + "\n\n質問の対象が特定できない場合は、案件名または顧客名を含めて聞いてください。", data: searchResults };
+  }
+
+  function renderChatMessage(m) {
+    if (m.role === "user") {
+      return '<div class="chat-bubble-user"><span>' + nl2br(m.text) + '</span></div>';
+    }
+    var d = m.data || {};
+    var extra = "";
+    if (d.lines) extra += d.lines.map(function (l) { return '<div class="content-preview" style="margin-top:6px">' + nl2br(l) + '</div>'; }).join("");
+    if (d.projectCards) extra += renderChatProjectCards(d.projectCards);
+    if (d.invoiceCards) extra += renderChatInvoiceCards(d.invoiceCards);
+    if (d.memoCards && d.memoCards.length) extra += renderChatMemoCards(d.memoCards);
+    if (d.projectStatus) extra += renderChatStatusCard(d.projectStatus);
+    if (d.freeTextSummary) extra += renderChatFreeTextSummary(d.freeTextSummary);
+    if (d.invoiceDraft) extra += renderChatInvoiceDraftCard(d.invoiceDraft);
+    return '<div class="chat-bubble-assistant"><div class="bubble">' + nl2br(m.text) + '</div>' + extra + '</div>';
+  }
+
+  function renderChat() {
+    var body = chatHistory.map(renderChatMessage).join("");
+    return (
+      '<header><button class="back" data-go="home">← 戻る</button><h1>💬 業務アシスタント</h1></header>' +
+      '<div id="chatLog">' + (body || '<div class="empty-state">「今日何ある？」「未請求ある？」「○○邸どうなってる？」のように聞いてみてください。</div>') + '</div>' +
+      '<div class="mic-row" style="margin-top:14px">' +
+      '<input type="text" id="chatInput" placeholder="メッセージを入力…">' +
+      '<button class="mic-btn" id="chatMicBtn" title="音声入力">🎤</button>' +
+      '</div>' +
+      '<button class="primary-btn" id="chatSendBtn">送信</button>'
+    );
+  }
+
+  // ---------------- 自社情報 ----------------
+  function renderSettings() {
+    var c = loadCompany();
+    return (
+      '<header><button class="back" data-go="home">← 戻る</button><h1>自社情報</h1></header>' +
+      '<p class="subtitle">ここで入力した内容が、見積書・請求書に自動で反映されます</p>' +
+      '<label>会社名・屋号</label><input type="text" id="c_name" value="' + esc(c.name) + '" placeholder="例: MT興業">' +
+      '<label>郵便番号</label><input type="text" id="c_zip" value="' + esc(c.zip) + '" placeholder="000-0000">' +
+      '<label>住所</label><input type="text" id="c_address" value="' + esc(c.address) + '">' +
+      '<label>TEL</label><input type="text" id="c_tel" value="' + esc(c.tel) + '">' +
+      '<label>FAX（任意）</label><input type="text" id="c_fax" value="' + esc(c.fax) + '">' +
+      '<label>インボイス登録番号（任意）</label><input type="text" id="c_regno" value="' + esc(c.invoiceRegNo) + '" placeholder="T0000000000000">' +
+      '<label>振込先: 銀行名</label><input type="text" id="c_bank" value="' + esc(c.bankName) + '">' +
+      '<label>支店名</label><input type="text" id="c_branch" value="' + esc(c.bankBranch) + '">' +
+      '<label>口座種別</label><select id="c_accType"><option' + (c.accountType === "普通" ? " selected" : "") + '>普通</option><option' + (c.accountType === "当座" ? " selected" : "") + '>当座</option></select>' +
+      '<label>口座番号</label><input type="text" id="c_accNo" value="' + esc(c.accountNumber) + '">' +
+      '<label>口座名義</label><input type="text" id="c_accHolder" value="' + esc(c.accountHolder) + '">' +
+      '<button class="primary-btn" id="saveCompanyBtn">保存する</button>' +
+      '<label style="margin-top:30px;border-top:1px solid var(--border);padding-top:20px">よく使う工事項目</label>' +
+      loadItemPresets().map(function (p) {
+        return '<div class="card" style="cursor:default;display:flex;justify-content:space-between;align-items:center;padding:10px 14px">' +
+          '<div><b>' + esc(p.category) + '</b><div class="content-preview">' + esc(p.spec) + '（' + esc(p.unit) + '）</div></div>' +
+          '<button class="delete-link" style="margin:0;width:auto" data-delete-preset="' + p.id + '">削除</button></div>';
+      }).join("") +
+      '<div class="card" style="cursor:default">' +
+      '<input type="text" id="ip_category" placeholder="項目名（例: 塗装工事）">' +
+      '<input type="text" id="ip_spec" placeholder="仕様・摘要（例: 外壁塗装）" style="margin-top:8px">' +
+      '<input type="text" id="ip_unit" placeholder="単位（例: ㎡）" style="margin-top:8px">' +
+      '<button class="secondary-btn" id="addPresetBtn">追加する</button>' +
+      '</div>'
+    );
+  }
+
+  // ---------------- イベント ----------------
+  function bindEvents() {
+    document.querySelectorAll("[data-go]").forEach(function (el) {
+      el.addEventListener("click", function () { go(el.getAttribute("data-go")); });
+    });
+
+    // 現場メモ: 入力
+    var micBtn = document.getElementById("micBtn");
+    if (micBtn) {
+      micBtn.addEventListener("click", function () {
+        toggleMic(
+          function (text) {
+            var ta = document.getElementById("rawInput");
+            ta.value = (ta.value ? ta.value + " " : "") + text;
+          },
+          function (listening, msg) {
+            micBtn.classList.toggle("listening", listening);
+            document.getElementById("micStatus").textContent = listening ? "聞き取り中…（もう一度タップで終了）" : (msg || "タップして開始 → もう一度タップで終了");
+          },
+          function (interimText) {
+            var status = document.getElementById("micStatus");
+            if (status && isListening) status.textContent = interimText ? "認識中: " + interimText : "聞き取り中…（もう一度タップで終了）";
+          }
+        );
+      });
+    }
+    var structureBtn = document.getElementById("structureBtn");
+    if (structureBtn) {
+      structureBtn.addEventListener("click", function () {
+        var raw = document.getElementById("rawInput").value.trim();
+        if (!raw) return;
+        go("confirm", { pendingRaw: raw, pendingStructured: structureText(raw) });
+      });
+    }
+    function readConfirmedCaptureFromDOM() {
+      return {
+        date: document.getElementById("f_date").value.trim(),
+        time: document.getElementById("f_time").value.trim(),
+        customer: document.getElementById("f_customer").value.trim(),
+        project: document.getElementById("f_project").value.trim(),
+        workLocation: document.getElementById("f_workLocation").value.trim(),
+        periodStart: document.getElementById("f_periodStart").value,
+        periodEnd: document.getElementById("f_periodEnd").value,
+        content: document.getElementById("f_content").value.trim(),
+        tasks: document.getElementById("f_tasks").value.trim(),
+        projectId: state.pendingProjectSelection ? state.pendingProjectSelection.projectId : null
+      };
+    }
+    function saveConfirmedCapture(confirmed) {
+      return createCaptureRecord(state.pendingRaw, state.pendingStructured, confirmed);
+    }
+    var saveBtn = document.getElementById("saveBtn");
+    if (saveBtn) {
+      saveBtn.addEventListener("click", function () {
+        saveConfirmedCapture(readConfirmedCaptureFromDOM());
+        go("history");
+      });
+    }
+    var makeQuoteBtn = document.getElementById("makeQuoteBtn");
+    if (makeQuoteBtn) {
+      makeQuoteBtn.addEventListener("click", function () {
+        var confirmed = readConfirmedCaptureFromDOM();
+        saveConfirmedCapture(confirmed);
+        var sel = state.pendingProjectSelection;
+        var base = defaultDocForm("quote");
+        var items = confirmed.content
+          ? [{ category: "", spec: confirmed.content, qty: 1, unit: "式", unitPrice: 0 }]
+          : base.items;
+        var remarks = base.remarks + (confirmed.tasks ? "\n・関連メモ: " + confirmed.tasks : "");
+        go("docForm", {
+          docForm: Object.assign(base, {
+            projectId: sel ? sel.projectId : null,
+            customerName: sel ? sel.customerName : confirmed.customer,
+            project: sel ? sel.projectName : confirmed.project,
+            workLocation: (sel && sel.workLocation) || confirmed.workLocation,
+            periodStart: (sel && sel.periodStart) || confirmed.periodStart,
+            periodEnd: (sel && sel.periodEnd) || confirmed.periodEnd,
+            items: items, remarks: remarks
+          })
+        });
+      });
+    }
+    var pickProjectBtnConfirm = state.view === "confirm" ? document.getElementById("pickProjectBtn") : null;
+    if (pickProjectBtnConfirm) {
+      pickProjectBtnConfirm.addEventListener("click", function () {
+        var prevRaw = state.pendingRaw;
+        var savedStructured = Object.assign({}, state.pendingStructured, readConfirmedCaptureFromDOM());
+        var prevSel = state.pendingProjectSelection;
+        go("projectPicker", {
+          onSelect: function (sel) { go("confirm", { pendingRaw: prevRaw, pendingStructured: savedStructured, pendingProjectSelection: sel }); },
+          onCancel: function () { go("confirm", { pendingRaw: prevRaw, pendingStructured: savedStructured, pendingProjectSelection: prevSel }); }
+        });
+      });
+    }
+    document.querySelectorAll("[data-detail]").forEach(function (el) {
+      el.addEventListener("click", function () { go("detail", { detailId: el.getAttribute("data-detail") }); });
+    });
+    var delCap = document.querySelector("[data-delete-capture]");
+    if (delCap) delCap.addEventListener("click", function () {
+      saveList(KEYS.captures, loadList(KEYS.captures).filter(function (x) { return x.id !== delCap.getAttribute("data-delete-capture"); }));
+      go("history");
+    });
+
+    // レシート
+    document.querySelectorAll("[data-receipt]").forEach(function (el) {
+      el.addEventListener("click", function () { go("receiptDetail", { receiptId: el.getAttribute("data-receipt") }); });
+    });
+    var photoInput = document.getElementById("photoInput");
+    if (photoInput) photoInput.addEventListener("change", function (e) {
+      var file = e.target.files[0];
+      if (!file) return;
+      resizeImageFile(file, 640, 0.6, function (dataUrl) { patch({ pendingImage: dataUrl }); });
+    });
+    var retakeBtn = document.getElementById("retakeBtn");
+    if (retakeBtn) retakeBtn.addEventListener("click", function () { patch({ pendingImage: null }); });
+    var ocrBtn = document.getElementById("ocrBtn");
+    if (ocrBtn) ocrBtn.addEventListener("click", function () {
+      runReceiptOCR(state.pendingImage, document.getElementById("ocrStatus"), document.getElementById("r_store"), document.getElementById("r_amount"));
+    });
+    var saveReceiptBtn = document.getElementById("saveReceiptBtn");
+    if (saveReceiptBtn) saveReceiptBtn.addEventListener("click", function () {
+      var proj = state.pendingReceiptProject;
+      createExpenseRecord({
+        imageDataUrl: state.pendingImage,
+        store: document.getElementById("r_store").value.trim(),
+        amount: Number(document.getElementById("r_amount").value) || 0,
+        date: document.getElementById("r_date").value,
+        project: proj ? proj.projectName : "",
+        projectId: proj ? proj.projectId : null,
+        category: document.getElementById("r_category").value
+      });
+      go("receiptList");
+    });
+    var delReceipt = document.querySelector("[data-delete-receipt]");
+    if (delReceipt) delReceipt.addEventListener("click", function () {
+      saveList(KEYS.receipts, loadList(KEYS.receipts).filter(function (x) { return x.id !== delReceipt.getAttribute("data-delete-receipt"); }));
+      go("receiptList");
+    });
+    var pickProjectBtnReceipt = state.view === "receiptCapture" ? document.getElementById("pickProjectBtn") : null;
+    if (pickProjectBtnReceipt) {
+      pickProjectBtnReceipt.addEventListener("click", function () {
+        var img = state.pendingImage;
+        var draft = {
+          store: document.getElementById("r_store").value,
+          amount: document.getElementById("r_amount").value,
+          date: document.getElementById("r_date").value,
+          category: document.getElementById("r_category").value
+        };
+        var prevProj = state.pendingReceiptProject;
+        go("projectPicker", {
+          onSelect: function (sel) { go("receiptCapture", { pendingImage: img, pendingReceiptProject: sel, receiptDraft: draft }); },
+          onCancel: function () { go("receiptCapture", { pendingImage: img, pendingReceiptProject: prevProj, receiptDraft: draft }); }
+        });
+      });
+    }
+
+    // 見積・請求・領収書: 一覧
+    ["newQuoteBtn:quote", "newInvoiceBtn:invoice", "newReceiptBtn:receipt"].forEach(function (pair) {
+      var parts = pair.split(":");
+      var el = document.getElementById(parts[0]);
+      if (el) el.addEventListener("click", function () { go("docForm", { docForm: defaultDocForm(parts[1]) }); });
+    });
+    document.querySelectorAll("[data-doc]").forEach(function (el) {
+      el.addEventListener("click", function () { go("docDetail", { docId: el.getAttribute("data-doc") }); });
+    });
+
+    // 見積・請求: 作成フォーム
+    var itemsWrap = document.getElementById("itemsWrap");
+    if (itemsWrap) itemsWrap.addEventListener("input", function (e) {
+      if (e.target.classList.contains("it-qty") || e.target.classList.contains("it-price")) updateLiveTotals();
+    });
+    if (itemsWrap) itemsWrap.addEventListener("change", function (e) {
+      if (!e.target.classList.contains("it-category-select")) return;
+      var card = e.target.closest(".item-card");
+      var customInput = card.querySelector(".it-category-custom");
+      if (e.target.value === "__custom__") {
+        customInput.style.display = "";
+        customInput.focus();
+      } else {
+        customInput.style.display = "none";
+        customInput.value = "";
+        if (e.target.value !== "") {
+          var preset = matchPreset(e.target.value);
+          if (preset) {
+            card.querySelector(".it-spec").value = preset.spec;
+            card.querySelector(".it-unit").value = preset.unit;
+          }
+        }
+      }
+    });
+    function syncDocFormFromDOM() {
+      var f = state.docForm;
+      f.customerName = document.getElementById("f_customerName").value.trim();
+      f.project = document.getElementById("f_project").value.trim();
+      f.docNumber = document.getElementById("f_docNumber").value.trim();
+      f.issueDate = document.getElementById("f_issueDate").value;
+      if (f.kind === "receipt") {
+        f.amountReceived = Number(document.getElementById("f_amountReceived").value) || 0;
+        f.description = document.getElementById("f_description").value.trim();
+        return;
+      }
+      f.workLocation = document.getElementById("f_workLocation").value.trim();
+      f.periodStart = document.getElementById("f_periodStart").value;
+      f.periodEnd = document.getElementById("f_periodEnd").value;
+      f.dueDate = document.getElementById("f_dueDate").value;
+      f.dueDateNote = document.getElementById("f_dueDateNote").value.trim();
+      var ptEl = document.getElementById("f_paymentTerms");
+      if (ptEl) f.paymentTerms = ptEl.value;
+      f.remarks = document.getElementById("f_remarks").value;
+      f.items = readItemsFromDOM();
+    }
+    var addItemBtn = document.getElementById("addItemBtn");
+    if (addItemBtn) addItemBtn.addEventListener("click", function () {
+      syncDocFormFromDOM();
+      state.docForm.items.push({ category: "", spec: "", qty: 1, unit: "式", unitPrice: 0 });
+      render();
+    });
+    document.querySelectorAll("[data-rm-idx]").forEach(function (el) {
+      el.addEventListener("click", function () {
+        syncDocFormFromDOM();
+        var idx = Number(el.getAttribute("data-rm-idx"));
+        if (state.docForm.items.length > 1) state.docForm.items.splice(idx, 1);
+        render();
+      });
+    });
+    var saveDocBtn = document.getElementById("saveDocBtn");
+    if (saveDocBtn) saveDocBtn.addEventListener("click", function () {
+      syncDocFormFromDOM();
+      var record = createDocumentRecord(state.docForm);
+      go("docDetail", { docId: record.id });
+    });
+    var pickProjectBtnDoc = (state.view === "docForm") ? document.getElementById("pickProjectBtn") : null;
+    if (pickProjectBtnDoc) {
+      pickProjectBtnDoc.addEventListener("click", function () {
+        syncDocFormFromDOM();
+        var f = state.docForm;
+        go("projectPicker", {
+          onSelect: function (sel) {
+            f.projectId = sel.projectId;
+            f.customerName = sel.customerName || f.customerName;
+            f.project = sel.projectName || f.project;
+            if (f.kind !== "receipt") {
+              f.workLocation = sel.workLocation || f.workLocation;
+              f.periodStart = sel.periodStart || f.periodStart;
+              f.periodEnd = sel.periodEnd || f.periodEnd;
+            }
+            go("docForm", { docForm: f });
+          },
+          onCancel: function () { go("docForm", { docForm: f }); }
+        });
+      });
+    }
+
+    // 見積・請求: 詳細
+    var printBtn = document.getElementById("printBtn");
+    if (printBtn) printBtn.addEventListener("click", function () { window.print(); });
+    var exportBtn = document.getElementById("exportXlsxBtn");
+    if (exportBtn) exportBtn.addEventListener("click", function () {
+      var found = findDoc(state.docId);
+      if (found) exportXlsx(found.doc, found.kind);
+    });
+    function startInvoiceWithChangeOrderCheck(base) {
+      var unbilled = base.projectId ? unbilledChangeOrders(base.projectId) : [];
+      if (unbilled.length === 0) { go("docForm", { docForm: base }); return; }
+      go("changeOrderReview", {
+        pendingInvoiceBase: base,
+        pendingChangeOrders: unbilled.map(function (c) { return { id: c.id, description: c.description, amount: c.amount, checked: true }; })
+      });
+    }
+    var makeInvoiceBtn = document.querySelector("[data-make-invoice]");
+    if (makeInvoiceBtn) makeInvoiceBtn.addEventListener("click", function () {
+      var found = findDoc(makeInvoiceBtn.getAttribute("data-make-invoice"));
+      if (!found) return;
+      var q = found.doc;
+      var base = defaultDocForm("invoice");
+      Object.assign(base, {
+        projectId: q.projectId || null,
+        customerName: q.customerName, project: q.project, workLocation: q.workLocation,
+        periodStart: q.periodStart, periodEnd: q.periodEnd,
+        items: q.items.map(function (it) { return Object.assign({}, it); }),
+        fromQuoteId: q.id
+      });
+      startInvoiceWithChangeOrderCheck(base);
+    });
+    var makeReceiptBtn = document.querySelector("[data-make-receipt]");
+    if (makeReceiptBtn) makeReceiptBtn.addEventListener("click", function () {
+      var found = findDoc(makeReceiptBtn.getAttribute("data-make-receipt"));
+      if (!found) return;
+      var inv = found.doc;
+      var base = defaultDocForm("receipt");
+      go("docForm", {
+        docForm: Object.assign(base, {
+          projectId: inv.projectId || null,
+          customerName: inv.customerName, project: inv.project,
+          amountReceived: calcTotals(inv.items).total, fromInvoiceId: inv.id
+        })
+      });
+    });
+    var delDoc = document.querySelector("[data-delete-doc]");
+    if (delDoc) delDoc.addEventListener("click", function () {
+      var id = delDoc.getAttribute("data-delete-doc");
+      var found = findDoc(id);
+      if (found) saveList(found.key, loadList(found.key).filter(function (x) { return x.id !== id; }));
+      go("docList");
+    });
+
+    // 入金確認・案件割り当て（見積・請求・領収書 共通）
+    var recordPaymentBtn = document.getElementById("recordPaymentBtn");
+    if (recordPaymentBtn) recordPaymentBtn.addEventListener("click", function () {
+      var amount = Number(document.getElementById("payAmount").value) || 0;
+      if (amount <= 0) { alert("入金額を入力してください。"); return; }
+      recordPayment(recordPaymentBtn.getAttribute("data-invoice-id"), amount, document.getElementById("payDate").value, "");
+      render();
+    });
+    document.querySelectorAll("[data-delete-payment]").forEach(function (el) {
+      el.addEventListener("click", function () {
+        deletePayment(el.getAttribute("data-delete-payment"));
+        render();
+      });
+    });
+    var assignProjectBtn = document.getElementById("assignProjectBtn");
+    if (assignProjectBtn) assignProjectBtn.addEventListener("click", function () {
+      var docId = state.docId;
+      var found = findDoc(docId);
+      if (!found) return;
+      go("projectPicker", {
+        onSelect: function (sel) { assignProjectToRecord(found.key, docId, sel); go("docDetail", { docId: docId }); },
+        onCancel: function () { go("docDetail", { docId: docId }); }
+      });
+    });
+    var assignProjectCaptureBtn = document.getElementById("assignProjectCaptureBtn");
+    if (assignProjectCaptureBtn) assignProjectCaptureBtn.addEventListener("click", function () {
+      var itemId = state.detailId;
+      go("projectPicker", {
+        onSelect: function (sel) { assignProjectToRecord(KEYS.captures, itemId, sel); go("detail", { detailId: itemId }); },
+        onCancel: function () { go("detail", { detailId: itemId }); }
+      });
+    });
+    var assignProjectReceiptBtn = document.getElementById("assignProjectReceiptBtn");
+    if (assignProjectReceiptBtn) assignProjectReceiptBtn.addEventListener("click", function () {
+      var rid = state.receiptId;
+      go("projectPicker", {
+        onSelect: function (sel) { assignProjectToRecord(KEYS.receipts, rid, sel); go("receiptDetail", { receiptId: rid }); },
+        onCancel: function () { go("receiptDetail", { receiptId: rid }); }
+      });
+    });
+
+    // 案件ピッカー
+    var pickerSearch = document.getElementById("pickerSearch");
+    if (pickerSearch) pickerSearch.addEventListener("input", function (e) { state.pickerQuery = e.target.value; render(); });
+    var pickerShowNewBtn = document.getElementById("pickerShowNewBtn");
+    if (pickerShowNewBtn) pickerShowNewBtn.addEventListener("click", function () { state.pickerShowNew = true; render(); });
+    var pickerCancelNewBtn = document.getElementById("pickerCancelNewBtn");
+    if (pickerCancelNewBtn) pickerCancelNewBtn.addEventListener("click", function () { state.pickerShowNew = false; render(); });
+    var pickerCreateBtn = document.getElementById("pickerCreateBtn");
+    if (pickerCreateBtn) pickerCreateBtn.addEventListener("click", function () {
+      var name = document.getElementById("pk_customerName").value.trim();
+      var projectName = document.getElementById("pk_projectName").value.trim();
+      if (!name || !projectName) { alert("顧客名と案件名を入力してください。"); return; }
+      var project = createOrReuseCustomerAndProject({
+        customerName: name,
+        customerAddress: document.getElementById("pk_customerAddress").value.trim(),
+        customerTel: document.getElementById("pk_customerTel").value.trim(),
+        projectName: projectName,
+        workLocation: document.getElementById("pk_workLocation").value.trim(),
+        periodStart: document.getElementById("pk_periodStart").value,
+        periodEnd: document.getElementById("pk_periodEnd").value
+      });
+      if (state.onSelect) state.onSelect(projectSelectionInfo(project.id));
+    });
+    var pickerCancelBtn = document.getElementById("pickerCancelBtn");
+    if (pickerCancelBtn) pickerCancelBtn.addEventListener("click", function () { if (state.onCancel) state.onCancel(); else go("home"); });
+    document.querySelectorAll("[data-pick-project]").forEach(function (el) {
+      el.addEventListener("click", function () {
+        var sel = projectSelectionInfo(el.getAttribute("data-pick-project"));
+        if (state.onSelect) state.onSelect(sel);
+      });
+    });
+
+    // 案件一覧・案件詳細
+    var newProjectBtn = document.getElementById("newProjectBtn");
+    if (newProjectBtn) newProjectBtn.addEventListener("click", function () {
+      go("projectPicker", {
+        onSelect: function (sel) { go("projectDetail", { projectId: sel.projectId }); },
+        onCancel: function () { go("projectList"); }
+      });
+    });
+    document.querySelectorAll("[data-project]").forEach(function (el) {
+      el.addEventListener("click", function () { go("projectDetail", { projectId: el.getAttribute("data-project") }); });
+    });
+    var stageSelect = document.getElementById("stageSelect");
+    if (stageSelect) stageSelect.addEventListener("change", function () {
+      updateProjectStage(state.projectId, stageSelect.value);
+    });
+    var quickQuoteBtn = document.getElementById("quickQuoteBtn");
+    if (quickQuoteBtn) quickQuoteBtn.addEventListener("click", function () {
+      var sel = projectSelectionInfo(state.projectId);
+      var base = defaultDocForm("quote");
+      go("docForm", {
+        docForm: Object.assign(base, {
+          projectId: sel.projectId, customerName: sel.customerName, project: sel.projectName,
+          workLocation: sel.workLocation, periodStart: sel.periodStart, periodEnd: sel.periodEnd
+        })
+      });
+    });
+    var quickInvoiceBtn = document.getElementById("quickInvoiceBtn");
+    if (quickInvoiceBtn) quickInvoiceBtn.addEventListener("click", function () {
+      var sel = projectSelectionInfo(state.projectId);
+      var base = defaultDocForm("invoice");
+      Object.assign(base, {
+        projectId: sel.projectId, customerName: sel.customerName, project: sel.projectName,
+        workLocation: sel.workLocation, periodStart: sel.periodStart, periodEnd: sel.periodEnd
+      });
+      startInvoiceWithChangeOrderCheck(base);
+    });
+    var addChangeOrderBtn = document.getElementById("addChangeOrderBtn");
+    if (addChangeOrderBtn) addChangeOrderBtn.addEventListener("click", function () {
+      var desc = document.getElementById("co_description").value.trim();
+      var amount = Number(document.getElementById("co_amount").value) || 0;
+      if (!desc || !amount) { alert("内容と金額を入力してください。"); return; }
+      createChangeOrder(state.projectId, desc, amount);
+      render();
+    });
+
+    // 追加工事の請求組み込みチェックリスト
+    document.querySelectorAll(".co-check").forEach(function (el) {
+      el.addEventListener("change", function () {
+        var idx = Number(el.getAttribute("data-co-idx"));
+        if (state.pendingChangeOrders[idx]) state.pendingChangeOrders[idx].checked = el.checked;
+      });
+    });
+    var coReviewNextBtn = document.getElementById("coReviewNextBtn");
+    if (coReviewNextBtn) coReviewNextBtn.addEventListener("click", function () {
+      var base = state.pendingInvoiceBase;
+      var selected = (state.pendingChangeOrders || []).filter(function (c) { return c.checked; });
+      selected.forEach(function (c) {
+        base.items.push({ category: "追加工事", spec: c.description, qty: 1, unit: "式", unitPrice: c.amount });
+      });
+      base.selectedChangeOrderIds = selected.map(function (c) { return c.id; });
+      go("docForm", { docForm: base });
+    });
+    var coReviewCancelBtn = document.getElementById("coReviewCancelBtn");
+    if (coReviewCancelBtn) coReviewCancelBtn.addEventListener("click", function () { go("docForm", { docForm: state.pendingInvoiceBase }); });
+
+    // よく使う工事項目
+    var addPresetBtn = document.getElementById("addPresetBtn");
+    if (addPresetBtn) addPresetBtn.addEventListener("click", function () {
+      var category = document.getElementById("ip_category").value.trim();
+      if (!category) { alert("項目名を入力してください。"); return; }
+      var list = loadItemPresets();
+      list.push({ id: newId("ip"), category: category, spec: document.getElementById("ip_spec").value.trim(), unit: document.getElementById("ip_unit").value.trim() });
+      saveItemPresets(list);
+      render();
+    });
+    document.querySelectorAll("[data-delete-preset]").forEach(function (el) {
+      el.addEventListener("click", function () {
+        saveItemPresets(loadItemPresets().filter(function (p) { return p.id !== el.getAttribute("data-delete-preset"); }));
+        render();
+      });
+    });
+
+    // 現場写真
+    var addPhotoBtn = document.getElementById("addPhotoBtn");
+    if (addPhotoBtn) addPhotoBtn.addEventListener("click", function () { go("photoCapture", { photoProjectId: state.projectId }); });
+    var photoCaptureBack = document.getElementById("photoCaptureBack");
+    if (photoCaptureBack) photoCaptureBack.addEventListener("click", function () { go("projectDetail", { projectId: state.photoProjectId }); });
+    var photoFileInput = document.getElementById("photoFileInput");
+    if (photoFileInput) photoFileInput.addEventListener("change", function (e) {
+      var file = e.target.files[0];
+      if (!file) return;
+      resizeImageFile(file, 640, 0.6, function (dataUrl) { patch({ pendingPhoto: dataUrl }); });
+    });
+    var retakePhotoBtn = document.getElementById("retakePhotoBtn");
+    if (retakePhotoBtn) retakePhotoBtn.addEventListener("click", function () { patch({ pendingPhoto: null }); });
+    var savePhotoBtn = document.getElementById("savePhotoBtn");
+    if (savePhotoBtn) savePhotoBtn.addEventListener("click", function () {
+      createPhotoRecord(state.photoProjectId, state.pendingPhoto, document.getElementById("photo_phase").value, document.getElementById("photo_caption").value.trim());
+      go("projectDetail", { projectId: state.photoProjectId });
+    });
+    document.querySelectorAll("[data-photo]").forEach(function (el) {
+      el.addEventListener("click", function () { go("photoDetail", { photoId: el.getAttribute("data-photo"), photoBackProjectId: state.projectId }); });
+    });
+    var photoDetailBack = document.getElementById("photoDetailBack");
+    if (photoDetailBack) photoDetailBack.addEventListener("click", function () { go("projectDetail", { projectId: state.photoBackProjectId }); });
+    document.querySelectorAll("[data-delete-photo]").forEach(function (el) {
+      el.addEventListener("click", function () {
+        deletePhoto(el.getAttribute("data-delete-photo"));
+        go("projectDetail", { projectId: state.photoBackProjectId });
+      });
+    });
+
+    // スケジュール（予定）
+    var addScheduleBtn = document.getElementById("addScheduleBtn");
+    if (addScheduleBtn) addScheduleBtn.addEventListener("click", function () { go("scheduleForm", { scheduleProjectId: state.projectId }); });
+    var scheduleFormBack = document.getElementById("scheduleFormBack");
+    if (scheduleFormBack) scheduleFormBack.addEventListener("click", function () { go("projectDetail", { projectId: state.scheduleProjectId }); });
+    var saveScheduleBtn = document.getElementById("saveScheduleBtn");
+    if (saveScheduleBtn) saveScheduleBtn.addEventListener("click", function () {
+      var title = document.getElementById("sch_title").value.trim();
+      var date = document.getElementById("sch_date").value;
+      if (!title) { alert("内容を入力してください。"); return; }
+      if (!date) { alert("日付を指定してください。"); return; }
+      createScheduleEvent(state.scheduleProjectId, title, date, document.getElementById("sch_time").value.trim(), document.getElementById("sch_attendees").value.trim());
+      go("projectDetail", { projectId: state.scheduleProjectId });
+    });
+    document.querySelectorAll("[data-delete-schedule]").forEach(function (el) {
+      el.addEventListener("click", function () {
+        deleteScheduleEvent(el.getAttribute("data-delete-schedule"));
+        render();
+      });
+    });
+
+    // チャット（業務アシスタント）
+    function sendChatMessage(text) {
+      if (!text || !text.trim()) return;
+      chatHistory.push({ role: "user", text: text.trim() });
+
+      var parsedQuestion = interpretQuestion(text);
+      var searchIntent = parsedQuestion.searchIntents[0];
+      var searchResults = crossSearchData(searchIntent);
+
+      var response;
+      if (searchResults.projects.length === 1) {
+        var snapshot = buildProjectSnapshot(searchResults.projects[0].id, searchResults);
+        response = generateAnswer(text, snapshot);
+      } else if (searchResults.projects.length > 1) {
+        var firstProject = searchResults.projects[0];
+        var snapshot2 = buildProjectSnapshot(firstProject.id, searchResults);
+        response = generateAnswer(text, snapshot2);
+      } else {
+        response = buildGeneralFallbackResponse(text, searchResults);
+      }
+
+      lastInvoiceDraft = response.invoiceDraft || null;
+      chatHistory.push({ role: "assistant", text: response.text, data: response });
+      render();
+    }
+    var chatSendBtn = document.getElementById("chatSendBtn");
+    if (chatSendBtn) chatSendBtn.addEventListener("click", function () {
+      var input = document.getElementById("chatInput");
+      var text = input.value;
+      input.value = "";
+      sendChatMessage(text);
+    });
+    var chatInput = document.getElementById("chatInput");
+    if (chatInput) chatInput.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); document.getElementById("chatSendBtn").click(); }
+    });
+    var chatMicBtn = document.getElementById("chatMicBtn");
+    if (chatMicBtn) chatMicBtn.addEventListener("click", function () {
+      toggleMic(
+        function (text) { var input = document.getElementById("chatInput"); input.value = (input.value ? input.value + " " : "") + text; },
+        function (listening, msg) { chatMicBtn.classList.toggle("listening", listening); if (msg) alert(msg); },
+        function () {}
+      );
+    });
+    var chatConfirmInvoiceBtn = document.getElementById("chatConfirmInvoiceBtn");
+    if (chatConfirmInvoiceBtn) chatConfirmInvoiceBtn.addEventListener("click", function () {
+      if (!lastInvoiceDraft) return;
+      var sel = projectSelectionInfo(lastInvoiceDraft.projectId);
+      var base = defaultDocForm("invoice");
+      Object.assign(base, {
+        projectId: lastInvoiceDraft.projectId, customerName: sel.customerName, project: sel.projectName,
+        workLocation: sel.workLocation, periodStart: sel.periodStart, periodEnd: sel.periodEnd,
+        items: lastInvoiceDraft.items, selectedChangeOrderIds: lastInvoiceDraft.changeOrderIds, fromQuoteId: lastInvoiceDraft.quoteId
+      });
+      go("docForm", { docForm: base });
+    });
+
+    // 自社情報
+    var saveCompanyBtn = document.getElementById("saveCompanyBtn");
+    if (saveCompanyBtn) saveCompanyBtn.addEventListener("click", function () {
+      function val(id) { return document.getElementById(id).value.trim(); }
+      saveCompany({
+        name: val("c_name"), zip: val("c_zip"), address: val("c_address"), tel: val("c_tel"), fax: val("c_fax"),
+        invoiceRegNo: val("c_regno"), bankName: val("c_bank"), bankBranch: val("c_branch"),
+        accountType: document.getElementById("c_accType").value, accountNumber: val("c_accNo"), accountHolder: val("c_accHolder")
+      });
+      go("home");
+    });
+  }
+
+  render();
+})();
+</script>
+</body>
+</html>

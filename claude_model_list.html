@@ -1,0 +1,682 @@
+<title>Claude モデル一覧</title>
+<style>
+  :root {
+    --bg: #f4f5f1;
+    --surface: #ffffff;
+    --surface-2: #eceeea;
+    --text: #1a1e1d;
+    --text-muted: #565f5b;
+    --border: #dde1db;
+    --accent: #1f6f6b;
+    --accent-strong: #16514e;
+    --accent-soft: #e4f0ee;
+    --warn: #b8862e;
+    --warn-soft: #fbf1dd;
+    --danger: #b4574f;
+    --danger-soft: #f7e7e4;
+    --shadow: 0 1px 2px rgba(20, 24, 22, 0.04), 0 6px 20px rgba(20, 24, 22, 0.05);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14181a;
+      --surface: #1b2023;
+      --surface-2: #222829;
+      --text: #e7eae6;
+      --text-muted: #9ba39d;
+      --border: #2b3234;
+      --accent: #4fada6;
+      --accent-strong: #74c4bd;
+      --accent-soft: #1e3230;
+      --warn: #d9a94e;
+      --warn-soft: #332a17;
+      --danger: #d9807a;
+      --danger-soft: #35201f;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 30px rgba(0, 0, 0, 0.35);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #14181a;
+    --surface: #1b2023;
+    --surface-2: #222829;
+    --text: #e7eae6;
+    --text-muted: #9ba39d;
+    --border: #2b3234;
+    --accent: #4fada6;
+    --accent-strong: #74c4bd;
+    --accent-soft: #1e3230;
+    --warn: #d9a94e;
+    --warn-soft: #332a17;
+    --danger: #d9807a;
+    --danger-soft: #35201f;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 30px rgba(0, 0, 0, 0.35);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Hiragino Sans", "Yu Gothic Medium", "Noto Sans JP", "Segoe UI", system-ui, sans-serif;
+    font-size: 15.5px;
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1, h2, h3 {
+    font-family: "Noto Serif JP", "Hiragino Mincho ProN", "Iowan Old Style", Georgia, serif;
+    font-weight: 600;
+    color: var(--text);
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  code, .mono {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  a { color: var(--accent-strong); }
+
+  .wrap {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 3.5rem 1.5rem 5rem;
+  }
+
+  .eyebrow {
+    display: inline-block;
+    font-size: 0.72rem;
+    letter-spacing: 0.12em;
+    color: var(--accent-strong);
+    background: var(--accent-soft);
+    padding: 0.3rem 0.65rem;
+    border-radius: 3px;
+    margin-bottom: 1rem;
+  }
+
+  h1 { font-size: clamp(1.7rem, 4vw, 2.3rem); letter-spacing: 0.01em; }
+
+  .lede {
+    color: var(--text-muted);
+    max-width: 62ch;
+    margin-top: 0.9rem;
+    font-size: 0.97rem;
+  }
+
+  .meta-line {
+    margin-top: 1rem;
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    display: flex;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+  }
+  .meta-line strong { color: var(--text); font-weight: 600; }
+
+  nav.toc {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    margin: 2.5rem -1.5rem 2.5rem;
+    padding: 0 1.5rem;
+  }
+  nav.toc .inner {
+    max-width: 980px;
+    margin: 0 auto;
+    display: flex;
+    gap: 1.5rem;
+    overflow-x: auto;
+    padding: 0.85rem 0;
+  }
+  nav.toc a {
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 0.83rem;
+    white-space: nowrap;
+    border-bottom: 2px solid transparent;
+    padding-bottom: 0.2rem;
+  }
+  nav.toc a:hover { color: var(--accent-strong); border-bottom-color: var(--accent); }
+
+  section { margin-top: 3.5rem; scroll-margin-top: 4.5rem; }
+  section > h2 { font-size: 1.35rem; }
+  section > .section-sub {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    margin-top: 0.5rem;
+    max-width: 68ch;
+  }
+
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+    margin-top: 1.5rem;
+  }
+  @media (max-width: 700px) { .cards { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1.2rem 1.3rem;
+    box-shadow: var(--shadow);
+  }
+  .card .card-label {
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    text-transform: uppercase;
+  }
+  .card .card-title {
+    font-family: "Noto Serif JP", "Hiragino Mincho ProN", serif;
+    font-size: 1.15rem;
+    margin-top: 0.35rem;
+    color: var(--accent-strong);
+  }
+  .card .card-body {
+    margin-top: 0.5rem;
+    font-size: 0.87rem;
+    color: var(--text-muted);
+  }
+
+  .table-scroll {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-top: 1.5rem;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+  }
+
+  table { border-collapse: collapse; width: 100%; min-width: 780px; }
+
+  thead th {
+    position: sticky;
+    top: 0;
+    background: var(--surface-2);
+    text-align: left;
+    font-size: 0.72rem;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    font-weight: 600;
+    padding: 0.7rem 0.9rem;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  tbody td {
+    padding: 0.8rem 0.9rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.87rem;
+    vertical-align: top;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: var(--surface-2); }
+
+  .model-name { font-weight: 600; }
+  .model-id { color: var(--text-muted); font-size: 0.82rem; }
+  .num { text-align: right; white-space: nowrap; }
+  .note { color: var(--text-muted); font-size: 0.82rem; max-width: 24ch; }
+
+  .pill {
+    display: inline-block;
+    font-size: 0.72rem;
+    padding: 0.15rem 0.55rem;
+    border-radius: 99px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .pill-current { background: var(--accent-soft); color: var(--accent-strong); }
+  .pill-limited { background: var(--warn-soft); color: var(--warn); }
+  .pill-legacy { background: var(--surface-2); color: var(--text-muted); }
+  .pill-deprecated { background: var(--warn-soft); color: var(--warn); }
+  .pill-retired { background: var(--danger-soft); color: var(--danger); }
+
+  .tier-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-top: 1.5rem;
+  }
+  @media (max-width: 700px) { .tier-grid { grid-template-columns: 1fr; } }
+
+  .tier {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 4px;
+    padding: 1.1rem 1.3rem;
+  }
+  .tier h3 { font-size: 1.05rem; }
+  .tier p { font-size: 0.87rem; color: var(--text-muted); margin: 0.5rem 0 0; }
+  .tier .ids { margin-top: 0.6rem; font-size: 0.78rem; }
+  .tier .ids code {
+    display: inline-block;
+    background: var(--surface-2);
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    margin: 0.15rem 0.25rem 0.15rem 0;
+  }
+
+  .choose-list {
+    margin-top: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+  .choose-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 1rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 0.85rem 1.1rem;
+  }
+  .choose-row .use-case { font-size: 0.9rem; }
+  .choose-row .recommend {
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 0.82rem;
+    color: var(--accent-strong);
+    background: var(--accent-soft);
+    padding: 0.25rem 0.6rem;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+
+  dl.glossary {
+    margin-top: 1.5rem;
+    display: grid;
+    gap: 1rem;
+  }
+  dl.glossary > div {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 1rem;
+    display: grid;
+    grid-template-columns: 180px 1fr;
+    gap: 1rem;
+  }
+  @media (max-width: 600px) { dl.glossary > div { grid-template-columns: 1fr; } }
+  dl.glossary dt { font-weight: 600; font-size: 0.9rem; }
+  dl.glossary dd { margin: 0; color: var(--text-muted); font-size: 0.87rem; }
+
+  .callout {
+    margin-top: 1.5rem;
+    border: 1px solid var(--warn);
+    background: var(--warn-soft);
+    border-radius: 5px;
+    padding: 1rem 1.2rem;
+    font-size: 0.87rem;
+    display: flex;
+    gap: 0.7rem;
+  }
+  .callout .icon { font-size: 1rem; line-height: 1.6; }
+  .callout strong { display: block; margin-bottom: 0.2rem; }
+
+  footer {
+    margin-top: 4.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    line-height: 1.9;
+  }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <span class="eyebrow">CLAUDE API リファレンス</span>
+    <h1>Claude モデル一覧</h1>
+    <p class="lede">
+      Anthropic が提供する Claude モデルの現行ラインナップと、価格・コンテキスト長・用途の目安をまとめた早見表です。
+      あとで見返したときに迷わないよう、選び方と用語の説明も添えています。
+    </p>
+    <div class="meta-line">
+      <span><strong>作成日</strong>: 2026-08-13</span>
+      <span><strong>情報の基準日</strong>: 2026-06-24 キャッシュ</span>
+      <span><strong>正確性</strong>: モデルは頻繁に更新されるため、重要な判断の前は Models API で最新情報を確認してください</span>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <div class="inner">
+      <a href="#glance">概要</a>
+      <a href="#table">現行モデル一覧</a>
+      <a href="#tiers">ティア別の解説</a>
+      <a href="#choose">選び方</a>
+      <a href="#glossary">用語集</a>
+      <a href="#legacy">旧モデル・廃止予定</a>
+    </div>
+  </nav>
+
+  <section id="glance">
+    <h2>概要</h2>
+    <p class="section-sub">まず結論から。迷ったらこの3つを起点に考えれば大きく外しません。</p>
+    <div class="cards">
+      <div class="card">
+        <div class="card-label">既定の第一候補</div>
+        <div class="card-title">Claude Opus 5</div>
+        <div class="card-body">複雑なコーディングやエージェント作業に強い、現行の主力モデル。特に理由がなければまずこれを使う。</div>
+      </div>
+      <div class="card">
+        <div class="card-label">コスト重視の主力</div>
+        <div class="card-title">Claude Sonnet 5</div>
+        <div class="card-body">速度とコストのバランスが良く、本番の高頻度用途に向く。2026-08-31 までは導入価格が適用中。</div>
+      </div>
+      <div class="card">
+        <div class="card-label">最速・最安</div>
+        <div class="card-title">Claude Haiku 4.5</div>
+        <div class="card-body">分類や単純な抽出など、軽い作業を大量にさばくタスクに最適。</div>
+      </div>
+    </div>
+  </section>
+
+  <section id="table">
+    <h2>現行モデル一覧</h2>
+    <p class="section-sub">2026年8月時点で利用できる現行モデル。価格は 100万トークンあたりの米ドル。</p>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>モデル名</th>
+            <th>モデル ID</th>
+            <th class="num">コンテキスト</th>
+            <th class="num">最大出力</th>
+            <th class="num">入力 $/1M</th>
+            <th class="num">出力 $/1M</th>
+            <th>状態</th>
+            <th>特徴</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="model-name">Claude Fable 5</td>
+            <td class="model-id mono">claude-fable-5</td>
+            <td class="num mono">1M</td>
+            <td class="num mono">128K</td>
+            <td class="num mono">$10.00</td>
+            <td class="num mono">$50.00</td>
+            <td><span class="pill pill-current">最上位</span></td>
+            <td class="note">最も高性能。深い推論と長時間の自律タスク向け</td>
+          </tr>
+          <tr>
+            <td class="model-name">Claude Mythos 5</td>
+            <td class="model-id mono">claude-mythos-5</td>
+            <td class="num mono">1M</td>
+            <td class="num mono">128K</td>
+            <td class="num mono">$10.00</td>
+            <td class="num mono">$50.00</td>
+            <td><span class="pill pill-limited">限定提供</span></td>
+            <td class="note">Fable 5 と同等。Project Glasswing 参加者のみ</td>
+          </tr>
+          <tr>
+            <td class="model-name">Claude Opus 5</td>
+            <td class="model-id mono">claude-opus-5</td>
+            <td class="num mono">1M</td>
+            <td class="num mono">128K</td>
+            <td class="num mono">$5.00</td>
+            <td class="num mono">$25.00</td>
+            <td><span class="pill pill-current">現行既定</span></td>
+            <td class="note">複雑なコーディング・エージェント作業の主力</td>
+          </tr>
+          <tr>
+            <td class="model-name">Claude Opus 4.8</td>
+            <td class="model-id mono">claude-opus-4-8</td>
+            <td class="num mono">1M</td>
+            <td class="num mono">128K</td>
+            <td class="num mono">$5.00</td>
+            <td class="num mono">$25.00</td>
+            <td><span class="pill pill-current">現行</span></td>
+            <td class="note">Opus 5 の一つ前の世代。引き続き利用可</td>
+          </tr>
+          <tr>
+            <td class="model-name">Claude Opus 4.7</td>
+            <td class="model-id mono">claude-opus-4-7</td>
+            <td class="num mono">1M</td>
+            <td class="num mono">128K</td>
+            <td class="num mono">$5.00</td>
+            <td class="num mono">$25.00</td>
+            <td><span class="pill pill-current">現行</span></td>
+            <td class="note">Opus系のさらに一つ前の世代</td>
+          </tr>
+          <tr>
+            <td class="model-name">Claude Opus 4.6</td>
+            <td class="model-id mono">claude-opus-4-6</td>
+            <td class="num mono">1M</td>
+            <td class="num mono">128K</td>
+            <td class="num mono">$5.00</td>
+            <td class="num mono">$25.00</td>
+            <td><span class="pill pill-current">現行</span></td>
+            <td class="note">Opus系の中では古めのバージョン</td>
+          </tr>
+          <tr>
+            <td class="model-name">Claude Sonnet 5</td>
+            <td class="model-id mono">claude-sonnet-5</td>
+            <td class="num mono">1M</td>
+            <td class="num mono">128K</td>
+            <td class="num mono">$3.00<br><span class="note" style="margin:0">導入 $2.00〜08/31</span></td>
+            <td class="num mono">$15.00<br><span class="note" style="margin:0">導入 $10.00〜08/31</span></td>
+            <td><span class="pill pill-current">現行既定</span></td>
+            <td class="note">速度とコストのバランスが良い主力モデル</td>
+          </tr>
+          <tr>
+            <td class="model-name">Claude Sonnet 4.6</td>
+            <td class="model-id mono">claude-sonnet-4-6</td>
+            <td class="num mono">1M</td>
+            <td class="num mono">128K</td>
+            <td class="num mono">$3.00</td>
+            <td class="num mono">$15.00</td>
+            <td><span class="pill pill-current">現行</span></td>
+            <td class="note">Sonnet 5 の一つ前の世代</td>
+          </tr>
+          <tr>
+            <td class="model-name">Claude Haiku 4.5</td>
+            <td class="model-id mono">claude-haiku-4-5</td>
+            <td class="num mono">200K</td>
+            <td class="num mono">64K</td>
+            <td class="num mono">$1.00</td>
+            <td class="num mono">$5.00</td>
+            <td><span class="pill pill-current">現行</span></td>
+            <td class="note">最速・最安。単純作業を大量処理する用途に</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <span class="icon">⚠️</span>
+      <div>
+        <strong>価格の期限に注意</strong>
+        Claude Sonnet 5 の導入価格（入力 $2.00 / 出力 $10.00）は 2026-08-31 に終了予定です。作成日（08-13）から間もなく通常価格 $3.00 / $15.00 に切り替わるため、コスト試算時は日付を確認してください。
+      </div>
+    </div>
+  </section>
+
+  <section id="tiers">
+    <h2>ティア別の解説</h2>
+    <p class="section-sub">同じ「Claude」でも系統（ティア）によって性格が大きく異なります。</p>
+    <div class="tier-grid">
+      <div class="tier">
+        <h3>Fable / Mythos — 最上位ティア</h3>
+        <p>Anthropic が一般提供する中で最も高性能なモデル。深い推論、長時間にわたる自律的なエージェント作業で真価を発揮する。価格は最も高く、通常の用途にはオーバースペックになりがち。</p>
+        <div class="ids"><code>claude-fable-5</code><code>claude-mythos-5</code></div>
+      </div>
+      <div class="tier">
+        <h3>Opus — 上位ティア</h3>
+        <p>複雑なコーディングやマルチステップのエージェント作業に強い主力モデル。特別な理由がなければ、まずこのティアの最新版（Opus 5）を選ぶのが基本方針。</p>
+        <div class="ids"><code>claude-opus-5</code><code>claude-opus-4-8</code><code>claude-opus-4-7</code><code>claude-opus-4-6</code></div>
+      </div>
+      <div class="tier">
+        <h3>Sonnet — 中位ティア</h3>
+        <p>知性とコストと速度のバランスに優れる。高頻度で呼び出す本番アプリケーションのバックボーンとして選ばれることが多い。</p>
+        <div class="ids"><code>claude-sonnet-5</code><code>claude-sonnet-4-6</code></div>
+      </div>
+      <div class="tier">
+        <h3>Haiku — 軽量ティア</h3>
+        <p>最も高速・低コスト。分類、簡単な抽出、レイテンシが重要なタスクに向く。複雑な推論には不向き。</p>
+        <div class="ids"><code>claude-haiku-4-5</code></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="choose">
+    <h2>用途別の選び方</h2>
+    <p class="section-sub">目的から逆引きする早見表。</p>
+    <div class="choose-list">
+      <div class="choose-row">
+        <span class="use-case">最も高い性能・最も難しい推論タスクが必要</span>
+        <span class="recommend">claude-fable-5</span>
+      </div>
+      <div class="choose-row">
+        <span class="use-case">複雑なコーディング・エージェント作業（迷ったらこれ）</span>
+        <span class="recommend">claude-opus-5</span>
+      </div>
+      <div class="choose-row">
+        <span class="use-case">本番運用でコストと品質のバランスを取りたい</span>
+        <span class="recommend">claude-sonnet-5</span>
+      </div>
+      <div class="choose-row">
+        <span class="use-case">大量の単純作業を高速・低コストでさばきたい</span>
+        <span class="recommend">claude-haiku-4-5</span>
+      </div>
+      <div class="choose-row">
+        <span class="use-case">既存コードとの互換性を優先し、バージョンを固定したい</span>
+        <span class="recommend">4.6 / 4.7 / 4.8 系を明示指定</span>
+      </div>
+    </div>
+  </section>
+
+  <section id="glossary">
+    <h2>用語集</h2>
+    <p class="section-sub">表の中で出てくる用語の意味。</p>
+    <dl class="glossary">
+      <div>
+        <dt>コンテキストウィンドウ</dt>
+        <dd>一度のやり取りでモデルが読み込める入力の上限。1M はおよそ日本語で数十万〜百万文字規模の文脈を扱える目安。</dd>
+      </div>
+      <div>
+        <dt>最大出力トークン</dt>
+        <dd>一度の応答で生成できる出力の上限。長い出力が必要な場合はストリーミング呼び出しを推奨。</dd>
+      </div>
+      <div>
+        <dt>thinking（思考）</dt>
+        <dd>回答前にモデルが内部で段階的に推論を行う機能。現行モデルの多くは「adaptive（適応的）」設定で、必要な分だけ自動的に思考する。</dd>
+      </div>
+      <div>
+        <dt>effort（努力度）</dt>
+        <dd>思考の深さや応答の丁寧さを low・medium・high・xhigh・max の5段階で調整するパラメータ。上げるほど精度は上がるが、コストと時間も増える。</dd>
+      </div>
+      <div>
+        <dt>状態バッジの意味</dt>
+        <dd>「現行既定」は特別な理由がなければ選ぶべき最新版、「現行」は使用可能だが新しい版がある、「限定提供」は招待制プログラム限定、「非推奨」は近く廃止予定、「廃止済み」は既に利用不可を示す。</dd>
+      </div>
+    </dl>
+  </section>
+
+  <section id="legacy">
+    <h2>旧モデル・廃止予定</h2>
+    <p class="section-sub">過去のコードや設定に残っている可能性があるモデル ID の参考用。新規利用は非推奨。</p>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>モデル名</th>
+            <th>モデル ID</th>
+            <th>状態</th>
+            <th>廃止日の目安</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="model-name">Claude Opus 4.5</td>
+            <td class="model-id mono">claude-opus-4-5</td>
+            <td><span class="pill pill-legacy">現行（旧）</span></td>
+            <td class="note">—</td>
+          </tr>
+          <tr>
+            <td class="model-name">Claude Opus 4.1</td>
+            <td class="model-id mono">claude-opus-4-1</td>
+            <td><span class="pill pill-retired">要確認</span></td>
+            <td class="note">廃止予定 2026-08-05（作成日時点で既に経過している可能性）</td>
+          </tr>
+          <tr>
+            <td class="model-name">Claude Sonnet 4.5</td>
+            <td class="model-id mono">claude-sonnet-4-5</td>
+            <td><span class="pill pill-legacy">現行（旧）</span></td>
+            <td class="note">—</td>
+          </tr>
+          <tr>
+            <td class="model-name">Claude Sonnet 4</td>
+            <td class="model-id mono">claude-sonnet-4-0</td>
+            <td><span class="pill pill-deprecated">非推奨</span></td>
+            <td class="note">時期未定</td>
+          </tr>
+          <tr>
+            <td class="model-name">Claude Opus 4</td>
+            <td class="model-id mono">claude-opus-4-0</td>
+            <td><span class="pill pill-deprecated">非推奨</span></td>
+            <td class="note">時期未定</td>
+          </tr>
+          <tr>
+            <td class="model-name">Claude Haiku 3</td>
+            <td class="model-id mono">claude-3-haiku-20240307</td>
+            <td><span class="pill pill-retired">要確認</span></td>
+            <td class="note">廃止予定 2026-04-19（作成日時点で既に経過）</td>
+          </tr>
+          <tr>
+            <td class="model-name">Claude Sonnet 3.7</td>
+            <td class="model-id mono">claude-3-7-sonnet-20250219</td>
+            <td><span class="pill pill-retired">廃止済み</span></td>
+            <td class="note">2026-02-19</td>
+          </tr>
+          <tr>
+            <td class="model-name">Claude Haiku 3.5</td>
+            <td class="model-id mono">claude-3-5-haiku-20241022</td>
+            <td><span class="pill pill-retired">廃止済み</span></td>
+            <td class="note">2026-02-19</td>
+          </tr>
+          <tr>
+            <td class="model-name">Claude Opus 3</td>
+            <td class="model-id mono">claude-3-opus-20240229</td>
+            <td><span class="pill pill-retired">廃止済み</span></td>
+            <td class="note">2026-01-05</td>
+          </tr>
+          <tr>
+            <td class="model-name">Claude Sonnet 3.5（2種）</td>
+            <td class="model-id mono">claude-3-5-sonnet-*</td>
+            <td><span class="pill pill-retired">廃止済み</span></td>
+            <td class="note">2025-10-28</td>
+          </tr>
+          <tr>
+            <td class="model-name">Claude Sonnet 3 / Claude 2.x</td>
+            <td class="model-id mono">claude-3-sonnet-* / claude-2.x</td>
+            <td><span class="pill pill-retired">廃止済み</span></td>
+            <td class="note">2025-07-21</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <span class="icon">💡</span>
+      <div>
+        <strong>「要確認」について</strong>
+        Opus 4.1 と Haiku 3 は、この一覧のもとになった情報（2026-06-24 時点）では「まだ廃止されていないが近く廃止予定」とされていましたが、その廃止予定日は今回の作成日（2026-08-13）より前です。実際に廃止済みかどうかは Models API（<code class="mono">GET /v1/models/&#123;id&#125;</code>）で確認してください。
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    このページは Claude Code の内蔵リファレンス（claude-api スキル）にキャッシュされていた情報（基準日 2026-06-24）をもとに、2026-08-13 に作成しました。
+    モデルのラインナップ・価格・提供状況は今後変更される可能性があるため、実装や契約判断の前には最新の Models API またはドキュメントで裏付けを取ることを推奨します。
+  </footer>
+
+</div>

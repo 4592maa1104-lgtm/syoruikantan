@@ -1,0 +1,25 @@
+# 環境変数・認証情報
+.env
+.env.*
+*.pem
+*.key
+
+# 依存関係
+node_modules/
+
+# OS固有ファイル
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# エディタ・一時ファイル
+*.log
+*.tmp
+*~
+
+# バックアップファイル（例: index.html.backup-2026-08-14-135505）
+*.backup-*
+*.bak
+
+# Claude Code ローカル専用設定（マシン固有・共有しない）
+.claude/settings.local.json
