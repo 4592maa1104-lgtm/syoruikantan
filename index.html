@@ -190,7 +190,8 @@
     captures: "captures_v1", receipts: "receipts_v1", quotes: "quotes_v1", invoices: "invoices_v1",
     paymentReceipts: "payment_receipts_v1", company: "company_profile_v1",
     customers: "customers_v1", projects: "projects_v1", changeOrders: "change_orders_v1", itemPresets: "item_presets_v1",
-    payments: "payments_v1", photos: "photos_v1", scheduleEvents: "schedule_events_v1"
+    payments: "payments_v1", photos: "photos_v1", scheduleEvents: "schedule_events_v1",
+    syncQueue: "sync_queue_v1"
   };
 
   // ============================================================
@@ -240,6 +241,201 @@
       if (res.error) cb(res.error.message);
       else cb(null, res.count);
     }).catch(function (e) { cb((e && e.message) || "接続確認に失敗しました。"); });
+  }
+
+  // ============================================================
+  // Supabase 二重保存（Phase 1）
+  // 保存は必ずlocalStorageへ先に書き込み（今まで通り即座に成功する）、
+  // その後ベストエフォートでSupabaseへも書き込む。オフライン・通信エラー等で
+  // 失敗しても画面には一切表示せず、"未送信キュー"（sync_queue_v1）に記録して
+  // 起動時・定期的・オンライン復帰時に自動で再送する。ユーザーの操作は止めない。
+  // 読み取りは引き続き100% localStorageのみで行う（このキューは書き込みの
+  // 保険用途のみで、読み取りには一切使わない）。
+  // ============================================================
+
+  // ---- 同期種別ごとの テーブル名 ＋ JSレコード→Supabase行 変換 ----
+  // expenseReceipt/photo の image_url は、画像アップロードを伴うタスクの場合のみ
+  // runSyncTaskが後から付与する（部分更新で誤ってnull上書きしないよう、
+  // ここでは意図的に含めない。PostgRESTのupsertは渡さなかった列を書き換えない）。
+  var SYNC_MAPPERS = {
+    customer: { table: "customers", toRow: function (c) {
+      return { id: c.id, name: c.name || null, address: c.address || null, tel: c.tel || null,
+        contact_person: c.contactPerson || null, created_at: c.createdAt };
+    } },
+    project: { table: "projects", toRow: function (p) {
+      return { id: p.id, customer_id: p.customerId || null, name: p.name || null,
+        work_location: p.workLocation || null, period_start: p.periodStart || null,
+        period_end: p.periodEnd || null, stage: p.stage || null, created_at: p.createdAt };
+    } },
+    quote: { table: "quotes", toRow: function (q) {
+      return {
+        id: q.id, project_id: q.projectId || null, doc_number: q.docNumber || null,
+        issue_date: q.issueDate || null, customer_name: q.customerName || null,
+        project_name: q.project || null, work_location: q.workLocation || null,
+        period_start: q.periodStart || null, period_end: q.periodEnd || null,
+        due_date: q.dueDate || null, due_date_note: q.dueDateNote || null,
+        items: q.items || [], remarks: q.remarks || null, payment_terms: q.paymentTerms || null,
+        parent_quote_id: q.parentQuoteId || null, approval_status: q.approvalStatus || null,
+        billed: !!q.billed, invoice_id: q.invoiceId || null, created_at: q.createdAt
+      };
+    } },
+    invoice: { table: "invoices", toRow: function (inv) {
+      return {
+        id: inv.id, project_id: inv.projectId || null, doc_number: inv.docNumber || null,
+        issue_date: inv.issueDate || null, customer_name: inv.customerName || null,
+        project_name: inv.project || null, work_location: inv.workLocation || null,
+        period_start: inv.periodStart || null, period_end: inv.periodEnd || null,
+        due_date: inv.dueDate || null, due_date_note: inv.dueDateNote || null,
+        items: inv.items || [], remarks: inv.remarks || null, payment_terms: inv.paymentTerms || null,
+        quote_id: inv.quoteId || null, payment_status: inv.paymentStatus || null,
+        paid_date: inv.paidDate || null, change_order_ids: inv.changeOrderIds || [],
+        additional_quote_ids: inv.additionalQuoteIds || [], created_at: inv.createdAt
+      };
+    } },
+    paymentReceipt: { table: "payment_receipts", toRow: function (r) {
+      return { id: r.id, project_id: r.projectId || null, doc_number: r.docNumber || null,
+        issue_date: r.issueDate || null, customer_name: r.customerName || null,
+        project_name: r.project || null, amount_received: r.amountReceived || 0,
+        description: r.description || null, invoice_id: r.invoiceId || null, created_at: r.createdAt };
+    } },
+    changeOrder: { table: "change_orders", toRow: function (c) {
+      return { id: c.id, project_id: c.projectId, description: c.description || null,
+        amount: c.amount || 0, billed: !!c.billed, invoice_id: c.invoiceId || null, created_at: c.createdAt };
+    } },
+    payment: { table: "payments", toRow: function (p) {
+      return { id: p.id, invoice_id: p.invoiceId, amount: p.amount || 0, date: p.date || null,
+        note: p.note || null, created_at: p.createdAt };
+    } },
+    expenseReceipt: { table: "expense_receipts", toRow: function (r) {
+      return { id: r.id, project_id: r.projectId || null,
+        store: r.store || null, amount: r.amount || 0, date: r.date || null,
+        project_name: r.project || null, category: r.category || null, created_at: r.createdAt };
+    } },
+    photo: { table: "photos", toRow: function (p) {
+      return { id: p.id, project_id: p.projectId,
+        phase: p.phase || null, caption: p.caption || null, created_at: p.createdAt };
+    } },
+    scheduleEvent: { table: "schedule_events", toRow: function (s) {
+      return { id: s.id, project_id: s.projectId, title: s.title || null, date: s.date || null,
+        start_time: s.startTime || null, attendees: s.attendees || null, created_at: s.createdAt };
+    } },
+    capture: { table: "captures", toRow: function (c) {
+      return { id: c.id, project_id: c.projectId || null, raw_text: c.rawText || null,
+        structured: c.structured || null, confirmed: c.confirmed || null, status: c.status || null,
+        created_at: c.createdAt };
+    } },
+    companyProfile: { table: "company_profile", toRow: function (c) {
+      return { id: "default", name: c.name || null, zip: c.zip || null, address: c.address || null,
+        tel: c.tel || null, fax: c.fax || null, invoice_reg_no: c.invoiceRegNo || null,
+        bank_name: c.bankName || null, bank_branch: c.bankBranch || null,
+        account_type: c.accountType || null, account_number: c.accountNumber || null,
+        account_holder: c.accountHolder || null };
+    } }
+  };
+
+  // ---- 未送信キュー（sync_queue_v1） ----
+  function loadSyncQueue() { return loadList(KEYS.syncQueue); }
+  function saveSyncQueue(list) { return saveList(KEYS.syncQueue, list); }
+  function getPendingSyncCount() { return loadSyncQueue().length; }
+
+  // kind: SYNC_MAPPERSのキー。record: 同期したい時点の完全なJSレコード
+  // （部分パッチではなく常に完全な行を送る。upsertなので順序が前後しても最終的に収束する）。
+  // imageDataUrl/storagePath: 経費レシート・現場写真の新規作成時のみ指定する。
+  function enqueueSyncUpsert(kind, record, imageDataUrl, storagePath) {
+    if (!isSupabaseConfigured()) return; // 未設定の間はキューも作らない
+    var q = loadSyncQueue();
+    q.push({
+      id: newId("sync"), op: "upsert", kind: kind, record: record,
+      imageDataUrl: imageDataUrl || null, storagePath: storagePath || null,
+      createdAt: new Date().toISOString()
+    });
+    saveSyncQueue(q);
+    scheduleSyncSoon();
+  }
+  function enqueueSyncDelete(kind, id) {
+    if (!isSupabaseConfigured()) return;
+    var q = loadSyncQueue();
+    q.push({ id: newId("sync"), op: "delete", kind: kind, recordId: id, createdAt: new Date().toISOString() });
+    saveSyncQueue(q);
+    scheduleSyncSoon();
+  }
+
+  // ---- 実際の送信処理 ----
+  function runSyncTask(task, cb) {
+    var client = getSupabaseClient();
+    if (!client) { cb("Supabase未接続"); return; }
+    var mapper = SYNC_MAPPERS[task.kind];
+    if (!mapper) { cb("不明な同期種別: " + task.kind); return; }
+    if (task.op === "delete") {
+      client.from(mapper.table).delete().eq("id", task.recordId).then(function (res) {
+        cb(res.error ? res.error.message : null);
+      }).catch(function (e) { cb((e && e.message) || "削除の同期に失敗しました。"); });
+      return;
+    }
+    // op === "upsert"
+    if (task.imageDataUrl && task.storagePath) {
+      uploadTaskImage(client, task.imageDataUrl, task.storagePath, function (err) {
+        if (err) { cb(err); return; }
+        var row = mapper.toRow(task.record);
+        row.image_url = task.storagePath;
+        upsertRow(client, mapper.table, row, cb);
+      });
+    } else {
+      upsertRow(client, mapper.table, mapper.toRow(task.record), cb);
+    }
+  }
+  function upsertRow(client, table, row, cb) {
+    client.from(table).upsert(row).then(function (res) {
+      cb(res.error ? res.error.message : null);
+    }).catch(function (e) { cb((e && e.message) || "保存の同期に失敗しました。"); });
+  }
+  function uploadTaskImage(client, imageDataUrl, storagePath, cb) {
+    fetch(imageDataUrl).then(function (r) { return r.blob(); }).then(function (blob) {
+      return client.storage.from("app-images").upload(storagePath, blob, { upsert: true, contentType: "image/jpeg" });
+    }).then(function (res) {
+      cb(res.error ? res.error.message : null);
+    }).catch(function (e) { cb((e && e.message) || "画像の同期に失敗しました。"); });
+  }
+
+  // ---- キューの処理（起動時・定期実行・オンライン復帰時） ----
+  var syncInProgress = false;
+  function processSyncQueue() {
+    if (syncInProgress) return;
+    if (!isSupabaseConfigured()) return;
+    var client = getSupabaseClient();
+    if (!client) return; // CDN未読み込み等。次回のタイマーで再試行
+    getAuthSession(function (session) {
+      if (!session) return; // 未ログイン中は送らない（送ってもRLSで弾かれるだけ）
+      var queue = loadSyncQueue();
+      if (queue.length === 0) return;
+      syncInProgress = true;
+      var succeededIds = [];
+      runNextTask(queue, 0, succeededIds, function () {
+        if (succeededIds.length) {
+          // 処理中に新しく積まれたタスクを消さないよう、最新のキューを読み直してから
+          // 成功した分だけを取り除く（スナップショットで丸ごと上書きしない）。
+          var current = loadSyncQueue();
+          saveSyncQueue(current.filter(function (t) { return succeededIds.indexOf(t.id) === -1; }));
+        }
+        syncInProgress = false;
+        if (state.view === "settings") render();
+      });
+    });
+  }
+  // 先頭から順に送信し、失敗したタスクで打ち切る（順序維持のため）。
+  // 打ち切るまでに成功した分だけが succeededIds に積まれる。
+  function runNextTask(queueSnapshot, index, succeededIds, done) {
+    if (index >= queueSnapshot.length) { done(); return; }
+    runSyncTask(queueSnapshot[index], function (errMsg) {
+      if (errMsg) { done(); return; }
+      succeededIds.push(queueSnapshot[index].id);
+      runNextTask(queueSnapshot, index + 1, succeededIds, done);
+    });
+  }
+  var syncSoonTimer = null;
+  function scheduleSyncSoon() {
+    if (syncSoonTimer) return;
+    syncSoonTimer = setTimeout(function () { syncSoonTimer = null; processSyncQueue(); }, 1500);
   }
 
   function loadList(key) {
@@ -302,10 +498,12 @@
     var customers = loadCustomers();
     var name = (input.customerName || "").trim();
     var customer = customers.find(function (c) { return c.name === name; });
+    var isNewCustomer = false;
     if (!customer && name) {
       customer = { id: newId("cust"), name: name, address: input.customerAddress || "", tel: input.customerTel || "", contactPerson: "", createdAt: new Date().toISOString() };
       customers.push(customer);
       saveCustomers(customers);
+      isNewCustomer = true;
     }
     var projects = loadProjects();
     var project = {
@@ -315,6 +513,8 @@
     };
     projects.push(project);
     saveProjects(projects);
+    if (isNewCustomer) enqueueSyncUpsert("customer", customer);
+    enqueueSyncUpsert("project", project);
     return project;
   }
   function projectSelectionInfo(projectId) {
@@ -335,8 +535,10 @@
   }
   function markChangeOrdersBilled(ids, invoiceId) {
     var list = loadChangeOrders();
-    list.forEach(function (c) { if (ids.indexOf(c.id) !== -1) { c.billed = true; c.invoiceId = invoiceId; } });
+    var affected = [];
+    list.forEach(function (c) { if (ids.indexOf(c.id) !== -1) { c.billed = true; c.invoiceId = invoiceId; affected.push(c); } });
     saveChangeOrders(list);
+    affected.forEach(function (c) { enqueueSyncUpsert("changeOrder", c); });
   }
 
   // ---- 追加見積書（既存の見積書と同じデータ構造。parentQuoteId/approvalStatusで区別する） ----
@@ -347,15 +549,25 @@
   }
   function markAdditionalQuotesBilled(ids, invoiceId) {
     var list = loadList(KEYS.quotes);
-    list.forEach(function (q) { if (ids.indexOf(q.id) !== -1) { q.billed = true; q.invoiceId = invoiceId; } });
+    var affected = [];
+    list.forEach(function (q) { if (ids.indexOf(q.id) !== -1) { q.billed = true; q.invoiceId = invoiceId; affected.push(q); } });
     saveList(KEYS.quotes, list);
+    affected.forEach(function (q) { enqueueSyncUpsert("quote", q); });
   }
   function setQuoteApprovalStatus(quoteId, status) {
     var list = loadList(KEYS.quotes);
     var q = list.find(function (x) { return x.id === quoteId; });
-    if (q) { q.approvalStatus = status; saveList(KEYS.quotes, list); }
+    if (q) { q.approvalStatus = status; saveList(KEYS.quotes, list); enqueueSyncUpsert("quote", q); }
     return q;
   }
+
+  // key(KEYS.*の値) → Supabase同期種別 の対応（assignProjectToRecordで使う）
+  var ASSIGN_SYNC_KIND_BY_KEY = {};
+  ASSIGN_SYNC_KIND_BY_KEY[KEYS.quotes] = "quote";
+  ASSIGN_SYNC_KIND_BY_KEY[KEYS.invoices] = "invoice";
+  ASSIGN_SYNC_KIND_BY_KEY[KEYS.paymentReceipts] = "paymentReceipt";
+  ASSIGN_SYNC_KIND_BY_KEY[KEYS.receipts] = "expenseReceipt";
+  ASSIGN_SYNC_KIND_BY_KEY[KEYS.captures] = "capture";
 
   // 案件未設定の書類に、後から案件を割り当てる（見積/請求/領収書/経費/メモで共通利用）
   function assignProjectToRecord(key, id, sel) {
@@ -364,6 +576,8 @@
     if (!rec) return;
     rec.projectId = sel.projectId;
     saveList(key, list);
+    var syncKind = ASSIGN_SYNC_KIND_BY_KEY[key];
+    if (syncKind) enqueueSyncUpsert(syncKind, rec);
   }
 
   // ============================================================
@@ -377,7 +591,7 @@
   function updateProjectStage(projectId, stage) {
     var projects = loadProjects();
     var p = projects.find(function (x) { return x.id === projectId; });
-    if (p) { p.stage = stage; saveProjects(projects); }
+    if (p) { p.stage = stage; saveProjects(projects); enqueueSyncUpsert("project", p); }
     return p;
   }
 
@@ -386,6 +600,7 @@
     var rec = { id: newId("co"), projectId: projectId, description: description, amount: Number(amount) || 0, billed: false, invoiceId: null, createdAt: new Date().toISOString() };
     list.push(rec);
     saveChangeOrders(list);
+    enqueueSyncUpsert("changeOrder", rec);
     return rec;
   }
 
@@ -424,6 +639,7 @@
     }
     list.push(record);
     saveList(key, list);
+    enqueueSyncUpsert(f.kind === "receipt" ? "paymentReceipt" : f.kind, record);
     if (f.kind === "invoice" && record.changeOrderIds && record.changeOrderIds.length) markChangeOrdersBilled(record.changeOrderIds, id);
     if (f.kind === "invoice" && record.additionalQuoteIds && record.additionalQuoteIds.length) markAdditionalQuotesBilled(record.additionalQuoteIds, id);
     return record;
@@ -434,7 +650,12 @@
     var rec = { id: newId("c"), rawText: rawText, structured: structured, confirmed: confirmed, projectId: confirmed.projectId || null, status: "confirmed", createdAt: new Date().toISOString() };
     list.push(rec);
     saveList(KEYS.captures, list);
+    enqueueSyncUpsert("capture", rec);
     return rec;
+  }
+  function deleteCapture(id) {
+    saveList(KEYS.captures, loadList(KEYS.captures).filter(function (x) { return x.id !== id; }));
+    enqueueSyncDelete("capture", id);
   }
 
   function createExpenseRecord(data) {
@@ -446,7 +667,12 @@
     };
     list.push(rec);
     saveList(KEYS.receipts, list);
+    enqueueSyncUpsert("expenseReceipt", rec, rec.imageDataUrl, "expenses/" + rec.id + ".jpg");
     return rec;
+  }
+  function deleteExpenseRecord(id) {
+    saveList(KEYS.receipts, loadList(KEYS.receipts).filter(function (x) { return x.id !== id; }));
+    enqueueSyncDelete("expenseReceipt", id);
   }
 
   // ---- 入金（払い戻し不可の削除ではなく、記録の追加・取消で管理。分割入金に対応） ----
@@ -458,9 +684,13 @@
     var rec = { id: newId("pay"), invoiceId: invoiceId, amount: Number(amount) || 0, date: date || todayStr(), note: note || "", createdAt: new Date().toISOString() };
     list.push(rec);
     savePayments(list);
+    enqueueSyncUpsert("payment", rec);
     return rec;
   }
-  function deletePayment(paymentId) { savePayments(loadPayments().filter(function (p) { return p.id !== paymentId; })); }
+  function deletePayment(paymentId) {
+    savePayments(loadPayments().filter(function (p) { return p.id !== paymentId; }));
+    enqueueSyncDelete("payment", paymentId);
+  }
   // 請求金額に対する入金状況をまとめる。旧バージョンで記録された簡易ステータス(paymentStatus)しかない請求書とも互換
   function getInvoicePaymentInfo(invoiceId, total) {
     var list = paymentsForInvoice(invoiceId);
@@ -485,9 +715,13 @@
     var rec = { id: newId("photo"), projectId: projectId, imageDataUrl: imageDataUrl, phase: phase, caption: caption || "", createdAt: new Date().toISOString() };
     list.push(rec);
     savePhotos(list);
+    enqueueSyncUpsert("photo", rec, rec.imageDataUrl, "photos/" + rec.id + ".jpg");
     return rec;
   }
-  function deletePhoto(photoId) { savePhotos(loadPhotos().filter(function (p) { return p.id !== photoId; })); }
+  function deletePhoto(photoId) {
+    savePhotos(loadPhotos().filter(function (p) { return p.id !== photoId; }));
+    enqueueSyncDelete("photo", photoId);
+  }
 
   // ---- スケジュール（予定） ----
   function loadScheduleEvents() { return loadList(KEYS.scheduleEvents); }
@@ -497,9 +731,13 @@
     var rec = { id: newId("sched"), projectId: projectId, title: title, date: date, startTime: startTime || "", attendees: attendees || "", createdAt: new Date().toISOString() };
     list.push(rec);
     saveScheduleEvents(list);
+    enqueueSyncUpsert("scheduleEvent", rec);
     return rec;
   }
-  function deleteScheduleEvent(id) { saveScheduleEvents(loadScheduleEvents().filter(function (s) { return s.id !== id; })); }
+  function deleteScheduleEvent(id) {
+    saveScheduleEvents(loadScheduleEvents().filter(function (s) { return s.id !== id; }));
+    enqueueSyncDelete("scheduleEvent", id);
+  }
   function todaysScheduleEvents() {
     var today = todayStr();
     return loadScheduleEvents().filter(function (s) { return s.date === today; })
@@ -1108,7 +1346,7 @@
   function loadCompany() {
     try { return Object.assign({}, DEFAULT_COMPANY, JSON.parse(localStorage.getItem(KEYS.company)) || {}); } catch (e) { return Object.assign({}, DEFAULT_COMPANY); }
   }
-  function saveCompany(c) { localStorage.setItem(KEYS.company, JSON.stringify(c)); }
+  function saveCompany(c) { localStorage.setItem(KEYS.company, JSON.stringify(c)); enqueueSyncUpsert("companyProfile", c); }
 
   var DOC_KEY_BY_KIND = { quote: "quotes", invoice: "invoices", receipt: "paymentReceipts" };
   var DOC_PREFIX_BY_KIND = { quote: "EST", invoice: "INV", receipt: "RCP" };
@@ -1184,6 +1422,13 @@
       if (doc) return { doc: doc, kind: kinds[k], key: key };
     }
     return null;
+  }
+  var DOC_SYNC_KIND_BY_KIND = { quote: "quote", invoice: "invoice", receipt: "paymentReceipt" };
+  function deleteDocument(id) {
+    var found = findDoc(id);
+    if (!found) return;
+    saveList(found.key, loadList(found.key).filter(function (x) { return x.id !== id; }));
+    enqueueSyncDelete(DOC_SYNC_KIND_BY_KIND[found.kind], id);
   }
 
   // ---- 「AI整理」の仮実装（ルールベース。将来: 無料枠LLMに差し替え予定） ----
@@ -2318,6 +2563,7 @@
       signIn(email, password, function (errMsg) {
         if (errMsg) { patch({ loginBusy: false, loginError: errMsg }); return; }
         go("home");
+        processSyncQueue(); // ログイン直後、溜まっていた未送信キューがあれば試す
       });
     });
     var loginPasswordInput = document.getElementById("login_password");
@@ -2418,7 +2664,7 @@
     });
     var delCap = document.querySelector("[data-delete-capture]");
     if (delCap) delCap.addEventListener("click", function () {
-      saveList(KEYS.captures, loadList(KEYS.captures).filter(function (x) { return x.id !== delCap.getAttribute("data-delete-capture"); }));
+      deleteCapture(delCap.getAttribute("data-delete-capture"));
       go("history");
     });
 
@@ -2978,6 +3224,9 @@
     getAuthSession(function (session) {
       if (session) go("home"); else go("login");
     });
+    processSyncQueue(); // 起動時に一度、未送信キューの再送を試みる
+    setInterval(processSyncQueue, 45000); // 以降45秒ごとに再試行
+    window.addEventListener("online", function () { processSyncQueue(); }); // 電波復帰時にも即試行
   }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", boot);
