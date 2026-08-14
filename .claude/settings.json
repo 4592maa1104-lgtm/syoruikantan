@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-Command *)",
+      "PowerShell(Get-Content *)",
+      "PowerShell(Get-ChildItem *)",
+      "PowerShell(Get-Item *)",
+      "PowerShell(Test-Path *)",
+      "PowerShell(git status *)",
+      "PowerShell(git log *)",
+      "PowerShell(git diff *)",
+      "PowerShell(git branch)",
+      "PowerShell(node --version)"
+    ],
+    "ask": [
+      "PowerShell(Remove-Item *)",
+      "PowerShell(rm *)",
+      "PowerShell(git push*)",
+      "PowerShell(git reset --hard*)",
+      "PowerShell(git branch -d*)",
+      "PowerShell(git branch -D*)",
+      "PowerShell(Invoke-WebRequest *)",
+      "PowerShell(Invoke-RestMethod *)",
+      "PowerShell(Send-MailMessage *)",
+      "PowerShell(npm install*)",
+      "PowerShell(npm i *)",
+      "PowerShell(winget install*)",
+      "PowerShell(choco install*)"
+    ]
+  }
+}

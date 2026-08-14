@@ -8,6 +8,8 @@
 <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <!-- レシートのOCR（文字読み取り）機能でのみ使用する無料オープンソースライブラリ（Tesseract.js）。初回読み取り時に言語データ(数MB)を追加で取得する -->
 <script defer src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<!-- ログイン認証・Supabase接続でのみ使用する無料オープンソースライブラリ（Supabase JS）。Phase 0: 接続確認のみ、データ保存先はまだlocalStorageのまま -->
+<script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <style>
   :root {
     --bg: #f5f4f1;
@@ -190,6 +192,55 @@
     customers: "customers_v1", projects: "projects_v1", changeOrders: "change_orders_v1", itemPresets: "item_presets_v1",
     payments: "payments_v1", photos: "photos_v1", scheduleEvents: "schedule_events_v1"
   };
+
+  // ============================================================
+  // Supabase 接続設定（Phase 0: 準備のみ）
+  // anonキーは公開前提のキーであり秘密鍵ではないため、ここに直接書いてよい
+  // （実際のアクセス制御はSupabase側のRLSポリシーが担う）。
+  // service_role キー等の秘密鍵は絶対にここへ書かないこと。
+  // 値が空のうちは、ログイン画面を出さず従来通りlocalStorageのみで動作する。
+  // ============================================================
+  var SUPABASE_URL = "https://krnzmxncbihmcidikehb.supabase.co";
+  var SUPABASE_ANON_KEY = "sb_publishable_COPPdJDZ5EbN9bDXZdtPew_Sn_LyNim";
+  var supabaseClient = null;
+  function isSupabaseConfigured() { return !!(SUPABASE_URL && SUPABASE_ANON_KEY); }
+  function getSupabaseClient() {
+    if (!isSupabaseConfigured()) return null;
+    if (!window.supabase) return null; // CDNスクリプト(defer)がまだ読み込まれていない
+    if (!supabaseClient) supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    return supabaseClient;
+  }
+
+  // ---- 認証（Supabase Auth。ログインアカウントは自分専用の1つのみを想定） ----
+  function getAuthSession(cb) {
+    var client = getSupabaseClient();
+    if (!client) { cb(null); return; }
+    client.auth.getSession().then(function (res) {
+      cb((res && res.data && res.data.session) || null);
+    }).catch(function () { cb(null); });
+  }
+  function signIn(email, password, cb) {
+    var client = getSupabaseClient();
+    if (!client) { cb("Supabaseが設定されていません。"); return; }
+    client.auth.signInWithPassword({ email: email, password: password }).then(function (res) {
+      if (res.error) cb(res.error.message);
+      else cb(null);
+    }).catch(function (e) { cb((e && e.message) || "ログインに失敗しました。"); });
+  }
+  function signOut(cb) {
+    var client = getSupabaseClient();
+    if (!client) { cb && cb(); return; }
+    client.auth.signOut().then(function () { cb && cb(); });
+  }
+  // Phase 0: 接続確認専用。実データの読み書きにはまだ使わない。
+  function verifySupabaseConnection(cb) {
+    var client = getSupabaseClient();
+    if (!client) { cb("Supabase未設定のため確認できません。"); return; }
+    client.from("customers").select("id", { count: "exact", head: true }).then(function (res) {
+      if (res.error) cb(res.error.message);
+      else cb(null, res.count);
+    }).catch(function (e) { cb((e && e.message) || "接続確認に失敗しました。"); });
+  }
 
   function loadList(key) {
     try { return JSON.parse(localStorage.getItem(key)) || []; } catch (e) { return []; }
@@ -1378,7 +1429,8 @@
     var app = document.getElementById("app");
     var v = state.view;
     var html;
-    if (v === "home") html = renderHome();
+    if (v === "login") html = renderLogin();
+    else if (v === "home") html = renderHome();
     else if (v === "capture") html = renderCapture();
     else if (v === "confirm") html = renderConfirm();
     else if (v === "history") html = renderHistory();
@@ -1399,7 +1451,7 @@
     else if (v === "scheduleForm") html = renderScheduleForm();
     else if (v === "chat") html = renderChat();
     else html = renderHome();
-    app.innerHTML = html + renderBottomNav();
+    app.innerHTML = html + (v === "login" ? "" : renderBottomNav());
     bindEvents();
     var chatLog = document.getElementById("chatLog");
     if (chatLog) window.scrollTo(0, document.body.scrollHeight);
@@ -1425,6 +1477,20 @@
       item("chat", "💬", "チャット", ["chat"]) +
       item("projectList", "🏗", "案件", ["projectList", "projectDetail"]) +
       item("docList", "📄", "書類", ["docList", "docForm", "docDetail"]) +
+      '</div>'
+    );
+  }
+
+  // ---------------- ログイン ----------------
+  function renderLogin() {
+    return (
+      '<div style="margin-top:80px">' +
+      '<h1 style="text-align:center">🔐 ログイン</h1>' +
+      '<p class="subtitle" style="text-align:center">音声業務管理アプリ</p>' +
+      (state.loginError ? '<div class="content-preview" style="color:var(--danger);text-align:center;margin-bottom:10px">' + esc(state.loginError) + '</div>' : "") +
+      '<label>メールアドレス</label><input type="text" id="login_email" value="' + esc(state.loginEmail || "") + '" autocomplete="username">' +
+      '<label>パスワード</label><input type="password" id="login_password" autocomplete="current-password">' +
+      '<button class="primary-btn" id="loginBtn"' + (state.loginBusy ? " disabled" : "") + '>' + (state.loginBusy ? "確認中…" : "ログイン") + '</button>' +
       '</div>'
     );
   }
@@ -2226,7 +2292,13 @@
       '<input type="text" id="ip_spec" placeholder="仕様・摘要（例: 外壁塗装）" style="margin-top:8px">' +
       '<input type="text" id="ip_unit" placeholder="単位（例: ㎡）" style="margin-top:8px">' +
       '<button class="secondary-btn" id="addPresetBtn">追加する</button>' +
-      '</div>'
+      '</div>' +
+      (isSupabaseConfigured() ?
+        '<label style="margin-top:30px;border-top:1px solid var(--border);padding-top:20px">Supabase接続（Phase 0: 確認用）</label>' +
+        (state.supabaseCheckResult ? '<div class="content-preview">' + esc(state.supabaseCheckResult) + '</div>' : "") +
+        '<button class="secondary-btn" id="checkSupabaseBtn">接続を確認する</button>' +
+        '<button class="ghost-btn" id="logoutBtn">ログアウト</button>'
+        : "")
     );
   }
 
@@ -2234,6 +2306,23 @@
   function bindEvents() {
     document.querySelectorAll("[data-go]").forEach(function (el) {
       el.addEventListener("click", function () { go(el.getAttribute("data-go")); });
+    });
+
+    // ログイン
+    var loginBtn = document.getElementById("loginBtn");
+    if (loginBtn) loginBtn.addEventListener("click", function () {
+      var email = document.getElementById("login_email").value.trim();
+      var password = document.getElementById("login_password").value;
+      if (!email || !password) { patch({ loginError: "メールアドレスとパスワードを入力してください。" }); return; }
+      patch({ loginBusy: true, loginError: null, loginEmail: email });
+      signIn(email, password, function (errMsg) {
+        if (errMsg) { patch({ loginBusy: false, loginError: errMsg }); return; }
+        go("home");
+      });
+    });
+    var loginPasswordInput = document.getElementById("login_password");
+    if (loginPasswordInput) loginPasswordInput.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); var b = document.getElementById("loginBtn"); if (b) b.click(); }
     });
 
     // 現場メモ: 入力
@@ -2867,9 +2956,34 @@
       });
       go("home");
     });
+    var checkSupabaseBtn = document.getElementById("checkSupabaseBtn");
+    if (checkSupabaseBtn) checkSupabaseBtn.addEventListener("click", function () {
+      patch({ supabaseCheckResult: "確認中…" });
+      verifySupabaseConnection(function (errMsg, count) {
+        patch({ supabaseCheckResult: errMsg ? "接続エラー: " + errMsg : "接続OK（customersテーブル件数: " + count + "）" });
+      });
+    });
+    var logoutBtn = document.getElementById("logoutBtn");
+    if (logoutBtn) logoutBtn.addEventListener("click", function () {
+      signOut(function () { go("login"); });
+    });
   }
 
-  render();
+  // ---------------- 起動処理 ----------------
+  // Supabase未設定なら従来通り即座にホームを表示する。
+  // 設定済みならCDNスクリプト(defer)の読み込み完了を待ってからセッションを確認し、
+  // ログイン済みならホームへ、未ログインならログイン画面へ遷移する。
+  function boot() {
+    if (!isSupabaseConfigured()) { render(); return; }
+    getAuthSession(function (session) {
+      if (session) go("home"); else go("login");
+    });
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot);
+  } else {
+    boot();
+  }
 })();
 </script>
 </body>
