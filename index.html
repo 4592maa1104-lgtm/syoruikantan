@@ -201,8 +201,13 @@
   // service_role キー等の秘密鍵は絶対にここへ書かないこと。
   // 値が空のうちは、ログイン画面を出さず従来通りlocalStorageのみで動作する。
   // ============================================================
-  var SUPABASE_URL = "https://krnzmxncbihmcidikehb.supabase.co";
-  var SUPABASE_ANON_KEY = "sb_publishable_COPPdJDZ5EbN9bDXZdtPew_Sn_LyNim";
+  // 一時措置: ログイン用アカウントのパスワード不明でロックアウトされたため、
+  // 復旧までログイン機能を無効化（空文字）。元の値は下にコメントで保持。
+  // 元に戻す: この2行を消して、コメント側の2行を有効化する。
+  var SUPABASE_URL = "";
+  var SUPABASE_ANON_KEY = "";
+  // var SUPABASE_URL = "https://krnzmxncbihmcidikehb.supabase.co";
+  // var SUPABASE_ANON_KEY = "sb_publishable_COPPdJDZ5EbN9bDXZdtPew_Sn_LyNim";
   var supabaseClient = null;
   function isSupabaseConfigured() { return !!(SUPABASE_URL && SUPABASE_ANON_KEY); }
   function getSupabaseClient() {
@@ -212,18 +217,45 @@
     return supabaseClient;
   }
 
+  // ---- 通信の安全装置 ----
+  // 電波が不安定なとき（完全な圏外ではなく「入っているのに繋がらない」状態）、
+  // fetch等の通信がいつまでも返事を待ち続けてしまうことがある。
+  // 指定した時間で必ず諦めて次に進めるようにするための共通ラッパー。
+  // これにより、通信待ちが原因で画面の操作が止まってしまうことを防ぐ。
+  function withTimeout(promise, ms, timeoutMessage) {
+    return new Promise(function (resolve, reject) {
+      var settled = false;
+      var timer = setTimeout(function () {
+        if (settled) return;
+        settled = true;
+        reject(new Error(timeoutMessage || "通信がタイムアウトしました"));
+      }, ms);
+      promise.then(function (v) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(v);
+      }, function (e) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(e);
+      });
+    });
+  }
+
   // ---- 認証（Supabase Auth。ログインアカウントは自分専用の1つのみを想定） ----
   function getAuthSession(cb) {
     var client = getSupabaseClient();
     if (!client) { cb(null); return; }
-    client.auth.getSession().then(function (res) {
+    withTimeout(client.auth.getSession(), 10000, "セッション確認がタイムアウトしました").then(function (res) {
       cb((res && res.data && res.data.session) || null);
     }).catch(function () { cb(null); });
   }
   function signIn(email, password, cb) {
     var client = getSupabaseClient();
     if (!client) { cb("Supabaseが設定されていません。"); return; }
-    client.auth.signInWithPassword({ email: email, password: password }).then(function (res) {
+    withTimeout(client.auth.signInWithPassword({ email: email, password: password }), 15000, "ログインの通信がタイムアウトしました。電波の良い場所でもう一度お試しください。").then(function (res) {
       if (res.error) cb(res.error.message);
       else cb(null);
     }).catch(function (e) { cb((e && e.message) || "ログインに失敗しました。"); });
@@ -231,13 +263,13 @@
   function signOut(cb) {
     var client = getSupabaseClient();
     if (!client) { cb && cb(); return; }
-    client.auth.signOut().then(function () { cb && cb(); });
+    withTimeout(client.auth.signOut(), 10000, "ログアウトの通信がタイムアウトしました").then(function () { cb && cb(); }).catch(function () { cb && cb(); });
   }
   // Phase 0: 接続確認専用。実データの読み書きにはまだ使わない。
   function verifySupabaseConnection(cb) {
     var client = getSupabaseClient();
     if (!client) { cb("Supabase未設定のため確認できません。"); return; }
-    client.from("customers").select("id", { count: "exact", head: true }).then(function (res) {
+    withTimeout(client.from("customers").select("id", { count: "exact", head: true }), 12000, "接続確認がタイムアウトしました（電波の良い場所でもう一度お試しください）").then(function (res) {
       if (res.error) cb(res.error.message);
       else cb(null, res.count);
     }).catch(function (e) { cb((e && e.message) || "接続確認に失敗しました。"); });
@@ -367,7 +399,7 @@
     var mapper = SYNC_MAPPERS[task.kind];
     if (!mapper) { cb("不明な同期種別: " + task.kind); return; }
     if (task.op === "delete") {
-      client.from(mapper.table).delete().eq("id", task.recordId).then(function (res) {
+      withTimeout(client.from(mapper.table).delete().eq("id", task.recordId), 12000, "削除の同期がタイムアウトしました").then(function (res) {
         cb(res.error ? res.error.message : null);
       }).catch(function (e) { cb((e && e.message) || "削除の同期に失敗しました。"); });
       return;
@@ -385,13 +417,13 @@
     }
   }
   function upsertRow(client, table, row, cb) {
-    client.from(table).upsert(row).then(function (res) {
+    withTimeout(client.from(table).upsert(row), 12000, "保存の同期がタイムアウトしました").then(function (res) {
       cb(res.error ? res.error.message : null);
     }).catch(function (e) { cb((e && e.message) || "保存の同期に失敗しました。"); });
   }
   function uploadTaskImage(client, imageDataUrl, storagePath, cb) {
-    fetch(imageDataUrl).then(function (r) { return r.blob(); }).then(function (blob) {
-      return client.storage.from("app-images").upload(storagePath, blob, { upsert: true, contentType: "image/jpeg" });
+    withTimeout(fetch(imageDataUrl), 8000, "画像の読み込みがタイムアウトしました").then(function (r) { return r.blob(); }).then(function (blob) {
+      return withTimeout(client.storage.from("app-images").upload(storagePath, blob, { upsert: true, contentType: "image/jpeg" }), 15000, "画像アップロードがタイムアウトしました");
     }).then(function (res) {
       cb(res.error ? res.error.message : null);
     }).catch(function (e) { cb((e && e.message) || "画像の同期に失敗しました。"); });
@@ -399,6 +431,7 @@
 
   // ---- キューの処理（起動時・定期実行・オンライン復帰時） ----
   var syncInProgress = false;
+  var syncWatchdogTimer = null;
   function processSyncQueue() {
     if (syncInProgress) return;
     if (!isSupabaseConfigured()) return;
@@ -409,8 +442,14 @@
       var queue = loadSyncQueue();
       if (queue.length === 0) return;
       syncInProgress = true;
+      // 安全装置：個々の通信にタイムアウトを設けていても、想定外の理由で
+      // syncInProgressがtrueのまま戻ってこなくなる可能性はゼロにはできないため、
+      // 一定時間後には必ず解除して次回の自動再試行が動けるようにする。
+      if (syncWatchdogTimer) clearTimeout(syncWatchdogTimer);
+      syncWatchdogTimer = setTimeout(function () { syncInProgress = false; syncWatchdogTimer = null; }, 40000);
       var succeededIds = [];
       runNextTask(queue, 0, succeededIds, function () {
+        if (syncWatchdogTimer) { clearTimeout(syncWatchdogTimer); syncWatchdogTimer = null; }
         if (succeededIds.length) {
           // 処理中に新しく積まれたタスクを消さないよう、最新のキューを読み直してから
           // 成功した分だけを取り除く（スナップショットで丸ごと上書きしない）。
@@ -1279,6 +1318,10 @@
     return dateRange.from === dateRange.to ? dateRange.from : (dateRange.from + "〜" + dateRange.to);
   }
 
+  // 「今日の予定は？」等の回答は、案件詳細の「予定」機能で登録された schedule_events のみを対象にする。
+  // 以前は「話す・入力」のメモ（captures）も日付が一致すれば無関係に混ぜて返していたが、
+  // 予定と関係ない内容（買い物リスト等）まで答えに混入し使い勝手が悪かったため、対象から外した。
+  // 「話す・入力」のメモ自体は履歴画面からは今まで通り確認できる。
   function answerSchedule(question, dateRange) {
     if (!dateRange || !dateRange.from) {
       return { text: "日付を認識できませんでした。「今日」「明日」「8月13日」のように聞いてみてください。" };
@@ -1286,22 +1329,14 @@
     var label = scheduleDateLabel(question, dateRange);
     var events = loadScheduleEvents().filter(function (s) { return s.date >= dateRange.from && s.date <= dateRange.to; })
       .sort(function (a, b) { return (a.date + (a.startTime || "")).localeCompare(b.date + (b.startTime || "")); });
-    var memoMatches = loadList(KEYS.captures).filter(function (c) {
-      var iso = resolveCaptureDateToIso(c);
-      return iso && iso >= dateRange.from && iso <= dateRange.to;
-    });
-    if (events.length === 0 && memoMatches.length === 0) {
+    if (events.length === 0) {
       return { text: label + "の予定は登録されていません。" };
     }
     var lines = events.map(function (s) {
       var sel = projectSelectionInfo(s.projectId);
       return (dateRange.from !== dateRange.to ? s.date + " " : "") + (s.startTime ? s.startTime + " " : "") + (sel && sel.projectName ? sel.projectName + "：" : "") + s.title;
     });
-    memoMatches.forEach(function (c) {
-      var content = (c.confirmed && c.confirmed.content) || c.rawText || "";
-      lines.push("📝 " + content.slice(0, 40));
-    });
-    return { text: label + "の予定は" + (events.length + memoMatches.length) + "件です。", lines: lines };
+    return { text: label + "の予定は" + events.length + "件です。", lines: lines };
   }
 
   function answerCustomerProjects(customerId, customerName) {
@@ -1482,6 +1517,39 @@
       date: date, time: time, customer: customer, project: project,
       workLocation: workLocation, periodStart: periodStart, periodEnd: periodEnd,
       content: raw, tasks: tasks
+    };
+  }
+
+  // ---- AIによる要約・構造化（任意機能。Supabase Edge Functions経由でClaude APIを呼ぶ） ----
+  // APIキーはこのファイル(クライアント側)には一切含めず、Edge Functions側にだけ保管する。
+  // オフライン・未設定・タイムアウト・エラー時は必ずnullを返し、呼び出し側は
+  // 無料のstructureText()（キーワード抜き出しのみ）にフォールバックする。
+  // これにより、電波が無い現場でも「話す・入力」の操作自体は今まで通り止まらない。
+  function callAiStructure(rawText, cb) {
+    var client = getSupabaseClient();
+    if (!client || !isSupabaseConfigured()) { cb(null); return; }
+    withTimeout(
+      client.functions.invoke("ai-structure", { body: { rawText: rawText } }),
+      15000,
+      "AI要約がタイムアウトしました"
+    ).then(function (res) {
+      if (res.error || !res.data || !res.data.structured) { cb(null); return; }
+      var sanitized = sanitizeAiStructured(res.data.structured, rawText);
+      cb(sanitized); // 形式が想定外だった場合もnullを返し、呼び出し側でフォールバックさせる
+    }).catch(function () { cb(null); });
+  }
+  // AIが返したJSONを、既存の登録処理(confirm画面・createCaptureRecord)がそのまま使える形に検証・正規化する。
+  // 期待した形と全く違う（オブジェクトでない等）場合は、丸ごと信用せずnullを返す
+  // （＝呼び出し側で無料のstructureText()にフォールバック）。
+  // contentだけが空だった場合は、話した内容自体を失わないよう元の生テキストで補う。
+  function sanitizeAiStructured(raw, rawText) {
+    if (!raw || typeof raw !== "object") return null;
+    function str(v) { return typeof v === "string" ? v : ""; }
+    function dateOrEmpty(v) { return typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : ""; }
+    return {
+      date: str(raw.date), time: str(raw.time), customer: str(raw.customer), project: str(raw.project),
+      workLocation: str(raw.workLocation), periodStart: dateOrEmpty(raw.periodStart), periodEnd: dateOrEmpty(raw.periodEnd),
+      content: str(raw.content) || rawText, tasks: str(raw.tasks)
     };
   }
 
@@ -1797,7 +1865,7 @@
     var sel = state.pendingProjectSelection;
     return (
       '<header><button class="back" data-go="capture">← 戻る</button><h1>内容の確認</h1></header>' +
-      '<div class="badge">AIによる下書きです。必ず内容を確認してください</div>' +
+      '<div class="badge">' + (state.usedAiStructure ? "AIによる要約の下書きです。必ず内容を確認してください" : "簡易な自動抜き出しです（AI要約は使えませんでした）。必ず内容を確認してください") + '</div>' +
       '<label>案件に紐付ける（任意・見積書等に自動反映されます）</label>' +
       '<button class="secondary-btn" id="pickProjectBtn" style="margin-top:0">🔗 ' + (sel ? [sel.customerName, sel.projectName].filter(Boolean).join(" ／ ") : "案件を選ぶ") + '</button>' +
       '<div class="field-row"><label>日付</label><input type="text" id="f_date" value="' + esc(s.date) + '"></div>' +
@@ -1877,29 +1945,56 @@
     }
     return (
       '<header><button class="back" data-go="home">← 戻る</button><h1>レシート</h1></header>' +
-      '<button class="add-fab" data-go="receiptCapture">＋ レシートを撮影・登録</button>' + body
+      '<button class="add-fab" data-go="receiptCapture">＋ レシートを撮影・登録</button>' +
+      '<label class="secondary-btn" style="display:block;text-align:center;margin-top:10px;cursor:pointer">🖼 写真から複数選んで登録' +
+      '<input type="file" accept="image/*" multiple id="receiptBatchInput" style="display:none"></label>' +
+      '<div class="mic-hint" style="margin:6px 2px 0">すでに撮影済みのレシート写真を複数選ぶと、1枚ずつ内容を確認しながら連続で登録できます。</div>' +
+      body
     );
   }
 
   function renderReceiptCapture() {
     var img = state.pendingImage;
+    var batch = state.receiptBatchQueue;
+    var batchLabel = batch
+      ? '<div class="mic-hint" style="margin-bottom:10px">📚 複数登録モード：' + (state.receiptBatchIndex + 1) + ' / ' + batch.length + '枚目です。1枚ずつ内容を確認して保存してください。</div>'
+      : "";
     return (
       '<header><button class="back" data-go="receiptList">← 戻る</button><h1>レシート登録</h1></header>' +
+      batchLabel +
       (img
         ? '<div class="photo-frame"><img src="' + img + '"></div>' +
           '<button class="secondary-btn" id="ocrBtn">📖 文字を読み取る（無料・目安）</button>' +
           '<div class="mic-hint" id="ocrStatus">店舗名・金額を自動で読み取ってみます。無料の簡易OCRのため精度は完璧ではありません。読み取り後、必ず内容を確認・修正してください。</div>' +
-          '<button class="ghost-btn" id="retakeBtn">撮り直す</button>'
+          (batch
+            ? '<button class="ghost-btn" id="skipReceiptBtn">この写真はレシートではない（保存せず次へ）</button>'
+            : '<button class="ghost-btn" id="retakeBtn">撮り直す</button>')
         : '<label>レシートを撮影 or 選択</label><input type="file" accept="image/*" capture="environment" id="photoInput">' +
-          '<div class="mic-hint">カメラが使えない環境では、画像ファイルの選択になります。</div>') +
+          '<div class="mic-hint">カメラが使えない環境では、画像ファイルの選択になります。まとめて登録したい場合は、一覧画面の「写真から複数選んで登録」もお使いいただけます。</div>') +
       (img ?
       '<label>店舗名</label><input type="text" id="r_store" value="' + esc(state.receiptDraft ? state.receiptDraft.store : "") + '" placeholder="例: ○○ホームセンター">' +
       '<label>金額（円）</label><input type="number" id="r_amount" value="' + (state.receiptDraft ? state.receiptDraft.amount : "") + '" placeholder="12800">' +
       '<label>日付</label><input type="date" id="r_date" value="' + (state.receiptDraft ? state.receiptDraft.date : todayStr()) + '">' +
       '<label>案件（任意）</label><button class="secondary-btn" id="pickProjectBtn" style="margin-top:0">🔗 ' + (state.pendingReceiptProject ? [state.pendingReceiptProject.customerName, state.pendingReceiptProject.projectName].filter(Boolean).join(" ／ ") : "案件を選ぶ") + '</button>' +
       '<label>区分</label><select id="r_category"><option>材料費</option><option>工具・消耗品</option><option>交通費</option><option>その他経費</option></select>' +
-      '<button class="primary-btn" id="saveReceiptBtn">保存する</button>' : "")
+      '<button class="primary-btn" id="saveReceiptBtn">' + (batch ? "保存して次へ" : "保存する") + '</button>' : "")
     );
+  }
+
+  // 複数選択登録モード：次の1枚があればそこへ進み、無ければ一覧へ戻る。
+  // 案件の割り当ては同じバッチ内なら引き継ぐ（同じ現場の経費をまとめて登録することが多いため）。
+  // 店舗名・金額・区分はレシートごとに違うので、次の1枚では引き継がない。
+  function advanceReceiptBatchOrFinish() {
+    var batch = state.receiptBatchQueue;
+    var idx = state.receiptBatchIndex;
+    if (batch && idx + 1 < batch.length) {
+      go("receiptCapture", {
+        pendingImage: batch[idx + 1], receiptBatchQueue: batch, receiptBatchIndex: idx + 1,
+        pendingReceiptProject: state.pendingReceiptProject
+      });
+    } else {
+      go("receiptList");
+    }
   }
 
   function renderReceiptDetail(id) {
@@ -2596,7 +2691,17 @@
       structureBtn.addEventListener("click", function () {
         var raw = document.getElementById("rawInput").value.trim();
         if (!raw) return;
-        go("confirm", { pendingRaw: raw, pendingStructured: structureText(raw) });
+        // AIでの要約を試み、電波が無い・タイムアウト・未ログイン等で失敗した場合は
+        // 必ず無料のキーワード抜き出し(structureText)にフォールバックする。
+        // どちらの場合も「整理する」を押した操作自体が止まることはない。
+        structureBtn.disabled = true;
+        structureBtn.textContent = "整理中…";
+        callAiStructure(raw, function (aiResult) {
+          structureBtn.disabled = false;
+          structureBtn.textContent = "整理する";
+          var structured = aiResult || structureText(raw);
+          go("confirm", { pendingRaw: raw, pendingStructured: structured, usedAiStructure: !!aiResult });
+        });
       });
     }
     function readConfirmedCaptureFromDOM() {
@@ -2678,8 +2783,26 @@
       if (!file) return;
       resizeImageFile(file, 640, 0.6, function (dataUrl) { patch({ pendingImage: dataUrl }); });
     });
+    var receiptBatchInput = document.getElementById("receiptBatchInput");
+    if (receiptBatchInput) receiptBatchInput.addEventListener("change", function (e) {
+      var files = Array.prototype.slice.call(e.target.files || []);
+      if (files.length === 0) return;
+      var results = new Array(files.length);
+      var remaining = files.length;
+      files.forEach(function (file, i) {
+        resizeImageFile(file, 640, 0.6, function (dataUrl) {
+          results[i] = dataUrl;
+          remaining -= 1;
+          if (remaining === 0) {
+            go("receiptCapture", { pendingImage: results[0], receiptBatchQueue: results, receiptBatchIndex: 0 });
+          }
+        });
+      });
+    });
     var retakeBtn = document.getElementById("retakeBtn");
     if (retakeBtn) retakeBtn.addEventListener("click", function () { patch({ pendingImage: null }); });
+    var skipReceiptBtn = document.getElementById("skipReceiptBtn");
+    if (skipReceiptBtn) skipReceiptBtn.addEventListener("click", function () { advanceReceiptBatchOrFinish(); });
     var ocrBtn = document.getElementById("ocrBtn");
     if (ocrBtn) ocrBtn.addEventListener("click", function () {
       runReceiptOCR(state.pendingImage, document.getElementById("ocrStatus"), document.getElementById("r_store"), document.getElementById("r_amount"));
@@ -2696,11 +2819,11 @@
         projectId: proj ? proj.projectId : null,
         category: document.getElementById("r_category").value
       });
-      go("receiptList");
+      advanceReceiptBatchOrFinish();
     });
     var delReceipt = document.querySelector("[data-delete-receipt]");
     if (delReceipt) delReceipt.addEventListener("click", function () {
-      saveList(KEYS.receipts, loadList(KEYS.receipts).filter(function (x) { return x.id !== delReceipt.getAttribute("data-delete-receipt"); }));
+      deleteExpenseRecord(delReceipt.getAttribute("data-delete-receipt"));
       go("receiptList");
     });
     var pickProjectBtnReceipt = state.view === "receiptCapture" ? document.getElementById("pickProjectBtn") : null;
@@ -2714,9 +2837,11 @@
           category: document.getElementById("r_category").value
         };
         var prevProj = state.pendingReceiptProject;
+        var batchQueue = state.receiptBatchQueue;
+        var batchIndex = state.receiptBatchIndex;
         go("projectPicker", {
-          onSelect: function (sel) { go("receiptCapture", { pendingImage: img, pendingReceiptProject: sel, receiptDraft: draft }); },
-          onCancel: function () { go("receiptCapture", { pendingImage: img, pendingReceiptProject: prevProj, receiptDraft: draft }); }
+          onSelect: function (sel) { go("receiptCapture", { pendingImage: img, pendingReceiptProject: sel, receiptDraft: draft, receiptBatchQueue: batchQueue, receiptBatchIndex: batchIndex }); },
+          onCancel: function () { go("receiptCapture", { pendingImage: img, pendingReceiptProject: prevProj, receiptDraft: draft, receiptBatchQueue: batchQueue, receiptBatchIndex: batchIndex }); }
         });
       });
     }
@@ -2871,9 +2996,7 @@
     });
     var delDoc = document.querySelector("[data-delete-doc]");
     if (delDoc) delDoc.addEventListener("click", function () {
-      var id = delDoc.getAttribute("data-delete-doc");
-      var found = findDoc(id);
-      if (found) saveList(found.key, loadList(found.key).filter(function (x) { return x.id !== id; }));
+      deleteDocument(delDoc.getAttribute("data-delete-doc"));
       go("docList");
     });
 
